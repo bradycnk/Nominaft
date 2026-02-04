@@ -13,15 +13,17 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [config, setConfig] = useState<ConfigGlobal | null>(null);
   const [loading, setLoading] = useState(true);
+  
+  // Métricas del Dashboard
+  const [totalEmployees, setTotalEmployees] = useState(0);
+  const [estimatedPayrollVEF, setEstimatedPayrollVEF] = useState(0);
 
   useEffect(() => {
-    // 1. Obtener sesión inicial
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
     });
 
-    // 2. Escuchar cambios en la autenticación
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
@@ -29,26 +31,62 @@ const App: React.FC = () => {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Carga de configuración y métricas
   useEffect(() => {
     if (!session) return;
 
-    const fetchConfig = async () => {
+    const fetchData = async () => {
       try {
-        const { data, error } = await supabase.from('configuracion_global').select('*').single();
-        if (error) throw error;
-        if (data) setConfig(data);
+        // 1. Configuración Global
+        const { data: configData } = await supabase.from('configuracion_global').select('*').single();
+        if (configData) setConfig(configData);
+
+        // 2. Conteo de Empleados
+        const { count } = await supabase
+          .from('empleados')
+          .select('*', { count: 'exact', head: true })
+          .eq('activo', true);
+        setTotalEmployees(count || 0);
+
+        // 3. Cálculo de Nómina Estimada (Suma salarios * tasa)
+        const { data: employees } = await supabase
+          .from('empleados')
+          .select('salario_usd')
+          .eq('activo', true);
+        
+        if (employees && configData) {
+          const totalUsd = employees.reduce((sum, emp) => sum + Number(emp.salario_usd), 0);
+          setEstimatedPayrollVEF(totalUsd * configData.tasa_bcv);
+        }
+
       } catch (err) {
-        console.error("Error cargando configuración:", err);
+        console.error("Error cargando datos iniciales:", err);
       }
     };
-    fetchConfig();
 
-    const channel = supabase.channel('config-updates')
+    fetchData();
+
+    // Suscripción a cambios en configuración
+    const configChannel = supabase.channel('config-updates')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'configuracion_global' }, 
-      (payload) => setConfig(payload.new as ConfigGlobal))
+      (payload) => {
+        const newConfig = payload.new as ConfigGlobal;
+        setConfig(newConfig);
+        // Recalcular nómina estimada si cambia la tasa
+        fetchData(); 
+      })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    // Suscripción a cambios en empleados para actualizar contador
+    const employeeChannel = supabase.channel('employee-stats-updates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'empleados' }, 
+      () => fetchData())
+      .subscribe();
+
+    return () => { 
+      supabase.removeChannel(configChannel); 
+      supabase.removeChannel(employeeChannel);
+    };
   }, [session]);
 
   const handleLogout = async () => {
@@ -66,7 +104,6 @@ const App: React.FC = () => {
     );
   }
 
-  // Si no hay sesión, mostrar pantalla de Auth
   if (!session) {
     return <Auth />;
   }
@@ -76,7 +113,11 @@ const App: React.FC = () => {
       case 'dashboard':
         return (
           <>
-            <DashboardOverview config={config} />
+            <DashboardOverview 
+              config={config} 
+              totalEmployees={totalEmployees} 
+              estimatedPayrollVEF={estimatedPayrollVEF}
+            />
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
               <h2 className="text-2xl font-bold text-slate-800 mb-4">Bienvenido al Panel de Farmacia</h2>
               <p className="text-slate-600 leading-relaxed mb-6">
