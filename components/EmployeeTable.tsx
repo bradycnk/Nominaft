@@ -75,8 +75,9 @@ const EmployeeTable: React.FC = () => {
         <table className="w-full text-left">
           <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
             <tr>
+              <th className="px-6 py-4 font-bold text-center w-16">Foto</th>
               <th className="px-6 py-4 font-bold">Empleado</th>
-              <th className="px-6 py-4 font-bold">Cédula</th>
+              <th className="px-6 py-4 font-bold">Cédula / RIF</th>
               <th className="px-6 py-4 font-bold">Cargo</th>
               <th className="px-6 py-4 font-bold text-right">Salario (USD)</th>
               <th className="px-6 py-4 font-bold">Estatus</th>
@@ -86,7 +87,7 @@ const EmployeeTable: React.FC = () => {
           <tbody className="divide-y divide-slate-100">
             {loading && employees.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-10 text-center">
+                <td colSpan={7} className="px-6 py-10 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <div className="w-6 h-6 border-2 border-emerald-600 border-t-transparent animate-spin rounded-full"></div>
                     <span className="text-slate-400 text-sm font-medium">Actualizando lista...</span>
@@ -95,7 +96,7 @@ const EmployeeTable: React.FC = () => {
               </tr>
             ) : employees.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-10 text-center">
+                <td colSpan={7} className="px-6 py-10 text-center">
                   <div className="text-slate-300 text-4xl mb-2">📁</div>
                   <p className="text-slate-400 text-sm">No se encontraron empleados registrados.</p>
                 </td>
@@ -104,23 +105,39 @@ const EmployeeTable: React.FC = () => {
               employees.map((emp) => (
                 <tr key={emp.id} className="hover:bg-slate-50/80 transition-colors group">
                   <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-700 font-bold shadow-sm">
-                        {emp.nombre[0]}{emp.apellido[0]}
-                      </div>
-                      <div>
-                        <div className="font-bold text-slate-800 leading-tight">{emp.nombre} {emp.apellido}</div>
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Ingreso: {new Date(emp.fecha_ingreso).toLocaleDateString()}</div>
-                      </div>
+                    <div className="w-12 h-12 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center overflow-hidden shadow-sm">
+                      {emp.foto_url ? (
+                        <img 
+                          src={emp.foto_url} 
+                          alt={`${emp.nombre}`} 
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${emp.nombre}+${emp.apellido}&background=10b981&color=fff`;
+                          }}
+                        />
+                      ) : (
+                        <span className="text-emerald-700 font-bold text-sm">
+                          {emp.nombre[0]}{emp.apellido[0]}
+                        </span>
+                      )}
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-slate-600 font-medium font-mono text-sm">{emp.cedula}</td>
+                  <td className="px-6 py-4">
+                    <div>
+                      <div className="font-bold text-slate-800 leading-tight">{emp.nombre} {emp.apellido}</div>
+                      <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Ingreso: {new Date(emp.fecha_ingreso).toLocaleDateString('es-VE')}</div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="text-slate-600 font-medium font-mono text-xs">{emp.cedula}</div>
+                    <div className="text-[10px] text-slate-400 font-mono">{emp.rif || 'Sin RIF'}</div>
+                  </td>
                   <td className="px-6 py-4">
                     <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded-md text-[11px] font-bold uppercase">{emp.cargo}</span>
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="font-mono font-bold text-emerald-600">
-                      ${emp.salario_usd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      ${Number(emp.salario_usd).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                     </div>
                   </td>
                   <td className="px-6 py-4">
@@ -139,7 +156,17 @@ const EmployeeTable: React.FC = () => {
                       >
                         ✏️
                       </button>
-                      <button className="p-2 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg transition-all" title="Ver Expediente">📑</button>
+                      {emp.cv_url && (
+                        <a 
+                          href={emp.cv_url} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="p-2 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg transition-all" 
+                          title="Ver CV"
+                        >
+                          📄
+                        </a>
+                      )}
                     </div>
                   </td>
                 </tr>

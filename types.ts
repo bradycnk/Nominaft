@@ -43,5 +43,7 @@ export interface Asistencia {
   empleado_id: string;
   fecha: string;
   estado: 'presente' | 'falta' | 'reposo' | 'vacaciones';
+  hora_entrada?: string;
+  hora_salida?: string;
   observaciones?: string;
 }

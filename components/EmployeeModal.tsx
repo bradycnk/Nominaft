@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase.ts';
 import { Empleado } from '../types.ts';
 
@@ -12,32 +12,68 @@ interface EmployeeModalProps {
 const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employeeToEdit }) => {
   const [loading, setLoading] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(employeeToEdit?.foto_url || null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   
   const [formData, setFormData] = useState({
-    cedula: employeeToEdit?.cedula || '',
-    rif: employeeToEdit?.rif || '',
-    nombre: employeeToEdit?.nombre || '',
-    apellido: employeeToEdit?.apellido || '',
-    cargo: employeeToEdit?.cargo || '',
-    fecha_ingreso: employeeToEdit?.fecha_ingreso || new Date().toISOString().split('T')[0],
-    salario_usd: employeeToEdit?.salario_usd || 0,
-    activo: employeeToEdit?.activo ?? true,
-    foto_url: employeeToEdit?.foto_url || '',
-    cv_url: employeeToEdit?.cv_url || '',
+    cedula: '',
+    rif: '',
+    nombre: '',
+    apellido: '',
+    cargo: '',
+    fecha_ingreso: new Date().toISOString().split('T')[0],
+    salario_usd: 0,
+    activo: true,
+    foto_url: '',
+    cv_url: '',
   });
 
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cvInputRef = useRef<HTMLInputElement>(null);
 
+  // Sincronizar datos cuando el modal abre o cambia el empleado seleccionado
+  useEffect(() => {
+    if (isOpen) {
+      if (employeeToEdit) {
+        setFormData({
+          cedula: employeeToEdit.cedula || '',
+          rif: employeeToEdit.rif || '',
+          nombre: employeeToEdit.nombre || '',
+          apellido: employeeToEdit.apellido || '',
+          cargo: employeeToEdit.cargo || '',
+          fecha_ingreso: employeeToEdit.fecha_ingreso || new Date().toISOString().split('T')[0],
+          salario_usd: Number(employeeToEdit.salario_usd) || 0,
+          activo: employeeToEdit.activo ?? true,
+          foto_url: employeeToEdit.foto_url || '',
+          cv_url: employeeToEdit.cv_url || '',
+        });
+        setPhotoPreview(employeeToEdit.foto_url || null);
+      } else {
+        // Reset para nuevo ingreso
+        setFormData({
+          cedula: '',
+          rif: '',
+          nombre: '',
+          apellido: '',
+          cargo: '',
+          fecha_ingreso: new Date().toISOString().split('T')[0],
+          salario_usd: 0,
+          activo: true,
+          foto_url: '',
+          cv_url: '',
+        });
+        setPhotoPreview(null);
+      }
+    }
+  }, [isOpen, employeeToEdit]);
+
   if (!isOpen) return null;
 
   const handleFileUpload = async (file: File, type: 'photo' | 'cv', cedula: string) => {
     const fileExt = file.name.split('.').pop();
-    const fileName = `${type}_${cedula}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+    const fileName = `${type}_${cedula}_${Date.now()}.${fileExt}`;
     const filePath = `${cedula}/${fileName}`;
 
-    const { error: uploadError, data } = await supabase.storage
+    const { error: uploadError } = await supabase.storage
       .from('expedientes')
       .upload(filePath, file);
 
@@ -67,14 +103,17 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
       let finalFotoUrl = formData.foto_url;
       let finalCvUrl = formData.cv_url;
 
-      // Cargar archivos si fueron seleccionados
-      if (photoInputRef.current?.files?.[0] || cvInputRef.current?.files?.[0]) {
+      // Cargar archivos si fueron seleccionados nuevos
+      const newPhoto = photoInputRef.current?.files?.[0];
+      const newCv = cvInputRef.current?.files?.[0];
+
+      if (newPhoto || newCv) {
         setUploadingFiles(true);
-        if (photoInputRef.current?.files?.[0]) {
-          finalFotoUrl = await handleFileUpload(photoInputRef.current.files[0], 'photo', formData.cedula);
+        if (newPhoto) {
+          finalFotoUrl = await handleFileUpload(newPhoto, 'photo', formData.cedula);
         }
-        if (cvInputRef.current?.files?.[0]) {
-          finalCvUrl = await handleFileUpload(cvInputRef.current.files[0], 'cv', formData.cedula);
+        if (newCv) {
+          finalCvUrl = await handleFileUpload(newCv, 'cv', formData.cedula);
         }
       }
 
@@ -113,15 +152,18 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl my-8 animate-in fade-in zoom-in duration-200">
         <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 sticky top-0 z-10">
-          <h2 className="text-xl font-bold text-slate-800">
-            {employeeToEdit ? 'Editar Expediente' : 'Nuevo Ingreso (LOTTT)'}
-          </h2>
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">{employeeToEdit ? '📝' : '👤'}</span>
+            <h2 className="text-xl font-bold text-slate-800">
+              {employeeToEdit ? `Editando: ${employeeToEdit.nombre} ${employeeToEdit.apellido}` : 'Nuevo Ingreso (LOTTT)'}
+            </h2>
+          </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors text-2xl">&times;</button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-8 space-y-6">
           {/* Sección de Foto Carnet */}
-          <div className="flex flex-col items-center mb-6">
+          <div className="flex flex-col items-center mb-2">
             <div 
               onClick={() => photoInputRef.current?.click()}
               className="w-32 h-40 rounded-2xl bg-slate-100 border-2 border-dashed border-slate-300 flex flex-col items-center justify-center cursor-pointer hover:border-emerald-500 transition-all overflow-hidden relative group"
@@ -131,13 +173,14 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
               ) : (
                 <>
                   <span className="text-3xl mb-2">📸</span>
-                  <span className="text-[10px] font-bold text-slate-400 text-center px-4 uppercase">Foto Carnet</span>
+                  <span className="text-[10px] font-bold text-slate-400 text-center px-4 uppercase">Cargar Foto</span>
                 </>
               )}
               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold transition-opacity">
-                Cambiar Foto
+                Actualizar Foto
               </div>
             </div>
+            <p className="mt-2 text-[10px] text-slate-400 font-bold uppercase">Foto Carnet Digitalizada</p>
             <input 
               type="file" 
               ref={photoInputRef} 
@@ -216,12 +259,12 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Salario Mensual (USD)</label>
             <div className="relative">
-              <span className="absolute left-4 top-3 text-slate-400 font-bold">$</span>
+              <span className="absolute left-4 top-3 text-emerald-600 font-bold">$</span>
               <input
                 type="number"
                 step="0.01"
                 required
-                className="w-full pl-8 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-mono text-lg font-bold"
+                className="w-full pl-8 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-mono text-lg font-bold text-emerald-700"
                 value={formData.salario_usd}
                 onChange={e => setFormData({ ...formData, salario_usd: parseFloat(e.target.value) })}
               />
@@ -230,39 +273,51 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
 
           {/* Carga de Curriculum */}
           <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Adjuntar Curriculum Vitae (PDF/JPG/PNG)</label>
-            <div className="flex items-center gap-4">
-              <button 
-                type="button"
-                onClick={() => cvInputRef.current?.click()}
-                className="bg-white border border-slate-200 px-4 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100 transition-all flex items-center gap-2"
-              >
-                <span>📎</span> Seleccionar Archivo
-              </button>
-              <input 
-                type="file" 
-                ref={cvInputRef} 
-                className="hidden" 
-                accept=".pdf,image/jpeg,image/png" 
-              />
-              <span className="text-xs text-slate-400 truncate max-w-[200px]">
-                {cvInputRef.current?.files?.[0]?.name || (formData.cv_url ? 'CV Cargado previamente' : 'Ningún archivo seleccionado')}
-              </span>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Curriculum Vitae (PDF/JPG/PNG)</label>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <button 
+                  type="button"
+                  onClick={() => cvInputRef.current?.click()}
+                  className="bg-white border border-slate-200 px-4 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100 transition-all flex items-center gap-2 shadow-sm"
+                >
+                  <span>📎</span> {formData.cv_url ? 'Cambiar Archivo' : 'Adjuntar CV'}
+                </button>
+                <input 
+                  type="file" 
+                  ref={cvInputRef} 
+                  className="hidden" 
+                  accept=".pdf,image/jpeg,image/png" 
+                  onChange={() => setFormData({...formData})} // Force re-render to show filename
+                />
+              </div>
+              <div className="flex-1 text-right truncate">
+                 {cvInputRef.current?.files?.[0] ? (
+                   <span className="text-[10px] text-emerald-600 font-bold">{cvInputRef.current.files[0].name}</span>
+                 ) : formData.cv_url ? (
+                   <a href={formData.cv_url} target="_blank" className="text-[10px] text-blue-500 font-bold underline">Ver Documento Actual</a>
+                 ) : (
+                   <span className="text-[10px] text-slate-400">Sin archivo adjunto</span>
+                 )}
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 pt-2">
+          <div className="flex items-center gap-3 p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100">
             <input
               type="checkbox"
               id="activo"
-              className="w-5 h-5 accent-emerald-600 cursor-pointer"
+              className="w-6 h-6 accent-emerald-600 cursor-pointer"
               checked={formData.activo}
               onChange={e => setFormData({ ...formData, activo: e.target.checked })}
             />
-            <label htmlFor="activo" className="text-sm font-semibold text-slate-700 cursor-pointer">Empleado Activo</label>
+            <div className="cursor-pointer" onClick={() => setFormData({ ...formData, activo: !formData.activo })}>
+              <label htmlFor="activo" className="block text-sm font-bold text-emerald-900 cursor-pointer">Empleado Activo</label>
+              <p className="text-[10px] text-emerald-700">Incluir en los cálculos de nómina del mes actual</p>
+            </div>
           </div>
 
-          <div className="flex gap-4 pt-6 sticky bottom-0 bg-white py-4 border-t border-slate-100">
+          <div className="flex gap-4 pt-4 sticky bottom-0 bg-white py-4 border-t border-slate-100">
             <button
               type="button"
               onClick={onClose}
@@ -278,10 +333,10 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
               {loading || uploadingFiles ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent animate-spin rounded-full"></div>
-                  <span>Guardando...</span>
+                  <span>Procesando...</span>
                 </>
               ) : (
-                <span>{employeeToEdit ? 'Actualizar Expediente' : 'Finalizar Registro'}</span>
+                <span>{employeeToEdit ? 'Guardar Cambios' : 'Registrar Empleado'}</span>
               )}
             </button>
           </div>

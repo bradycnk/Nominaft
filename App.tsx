@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar.tsx';
 import EmployeeTable from './components/EmployeeTable.tsx';
 import DashboardOverview from './components/DashboardOverview.tsx';
 import PayrollProcessor from './components/PayrollProcessor.tsx';
+import AttendanceManager from './components/AttendanceManager.tsx';
 import Auth from './components/Auth.tsx';
 import { supabase } from './lib/supabase.ts';
 import { ConfigGlobal } from './types.ts';
@@ -72,12 +73,10 @@ const App: React.FC = () => {
       (payload) => {
         const newConfig = payload.new as ConfigGlobal;
         setConfig(newConfig);
-        // Recalcular nómina estimada si cambia la tasa
         fetchData(); 
       })
       .subscribe();
 
-    // Suscripción a cambios en empleados para actualizar contador
     const employeeChannel = supabase.channel('employee-stats-updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'empleados' }, 
       () => fetchData())
@@ -146,14 +145,7 @@ const App: React.FC = () => {
       case 'nomina':
         return <PayrollProcessor config={config} />;
       case 'asistencia':
-        return (
-          <div className="bg-white p-12 rounded-2xl shadow-sm border border-slate-200 text-center">
-            <div className="text-4xl mb-4">📅</div>
-            <h2 className="text-xl font-bold text-slate-800">Control de Asistencia Biométrico</h2>
-            <p className="text-slate-500 mt-2">Módulo de registro diario y cálculo de horas extras LOTTT.</p>
-            <button className="mt-6 bg-slate-800 text-white px-4 py-2 rounded-lg">Configurar Calendario</button>
-          </div>
-        );
+        return <AttendanceManager />;
       case 'config':
         return (
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 max-w-2xl">
