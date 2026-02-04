@@ -4,14 +4,34 @@ import Sidebar from './components/Sidebar.tsx';
 import EmployeeTable from './components/EmployeeTable.tsx';
 import DashboardOverview from './components/DashboardOverview.tsx';
 import PayrollProcessor from './components/PayrollProcessor.tsx';
+import Auth from './components/Auth.tsx';
 import { supabase } from './lib/supabase.ts';
 import { ConfigGlobal } from './types.ts';
 
 const App: React.FC = () => {
+  const [session, setSession] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [config, setConfig] = useState<ConfigGlobal | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // 1. Obtener sesión inicial
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setLoading(false);
+    });
+
+    // 2. Escuchar cambios en la autenticación
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+
     const fetchConfig = async () => {
       try {
         const { data, error } = await supabase.from('configuracion_global').select('*').single();
@@ -29,7 +49,27 @@ const App: React.FC = () => {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [session]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-600 mb-4"></div>
+          <p className="text-slate-600 font-medium">Iniciando sistema...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Si no hay sesión, mostrar pantalla de Auth
+  if (!session) {
+    return <Auth />;
+  }
 
   const renderContent = () => {
     switch (activeTab) {
@@ -106,11 +146,16 @@ const App: React.FC = () => {
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <p className="text-sm font-bold text-slate-800">Admin Farmacia</p>
-              <p className="text-xs text-slate-500">Caja Principal / Nomina</p>
+              <p className="text-sm font-bold text-slate-800">{session.user.user_metadata.full_name || session.user.email}</p>
+              <button 
+                onClick={handleLogout}
+                className="text-xs text-red-500 hover:text-red-700 font-semibold"
+              >
+                Cerrar Sesión
+              </button>
             </div>
-            <div className="w-10 h-10 rounded-full bg-slate-300 overflow-hidden">
-              <img src="https://picsum.photos/100/100" alt="Profile" />
+            <div className="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center text-white font-bold text-sm">
+              {(session.user.user_metadata.full_name?.[0] || 'A').toUpperCase()}
             </div>
           </div>
         </header>

@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { supabase } from '../lib/supabase.ts';
 
 interface SidebarProps {
   activeTab: string;
@@ -14,6 +15,10 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
     { id: 'asistencia', label: 'Asistencia', icon: '📅' },
     { id: 'config', label: 'Configuración', icon: '⚙️' },
   ];
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
 
   return (
     <div className="w-64 bg-slate-900 h-screen text-white flex flex-col fixed left-0 top-0">
@@ -40,7 +45,10 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
         ))}
       </nav>
       <div className="p-4 border-t border-slate-800">
-        <button className="flex items-center gap-2 text-red-400 hover:text-red-300 w-full px-4 py-2">
+        <button 
+          onClick={handleLogout}
+          className="flex items-center gap-2 text-red-400 hover:text-red-300 w-full px-4 py-2"
+        >
           <span>🚪</span> Cerrar Sesión
         </button>
       </div>
