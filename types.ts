@@ -10,6 +10,7 @@ export interface ConfigGlobal {
 export interface Empleado {
   id: string;
   cedula: string;
+  rif: string;
   nombre: string;
   apellido: string;
   cargo: string;
@@ -17,6 +18,7 @@ export interface Empleado {
   salario_usd: number;
   activo: boolean;
   foto_url?: string;
+  cv_url?: string;
 }
 
 export interface Nomina {
