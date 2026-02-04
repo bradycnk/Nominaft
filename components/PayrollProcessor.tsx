@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
-import { Empleado, ConfigGlobal } from '../types';
-import { calculatePayroll, fetchBcvRate } from '../services/payrollService';
+import { supabase } from '../lib/supabase.ts';
+import { Empleado, ConfigGlobal } from '../types.ts';
+import { calculatePayroll, fetchBcvRate } from '../services/payrollService.ts';
 
 const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config }) => {
   const [employees, setEmployees] = useState<Empleado[]>([]);
@@ -18,15 +18,23 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
 
   const handleUpdateBcv = async () => {
     setIsUpdatingRate(true);
-    const newRate = await fetchBcvRate();
-    if (config) {
-      await supabase
-        .from('configuracion_global')
-        .update({ tasa_bcv: newRate })
-        .eq('id', config.id);
-      alert(`Tasa BCV actualizada a Bs. ${newRate}`);
+    try {
+      const newRate = await fetchBcvRate();
+      if (config) {
+        const { error } = await supabase
+          .from('configuracion_global')
+          .update({ tasa_bcv: newRate })
+          .eq('id', config.id);
+        
+        if (error) throw error;
+        alert(`Tasa BCV actualizada a Bs. ${newRate}`);
+      }
+    } catch (err) {
+      console.error("Error actualizando tasa:", err);
+      alert("No se pudo conectar con el servicio de tasas. Verifique su conexión.");
+    } finally {
+      setIsUpdatingRate(false);
     }
-    setIsUpdatingRate(false);
   };
 
   return (

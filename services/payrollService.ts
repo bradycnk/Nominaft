@@ -1,5 +1,5 @@
 
-import { ConfigGlobal, Empleado } from '../types';
+import { ConfigGlobal, Empleado } from '../types.ts';
 
 /**
  * Calcula la nómina de un empleado basándose en la tasa BCV actual y las leyes venezolanas.
@@ -44,7 +44,7 @@ export const fetchBcvRate = async (): Promise<number> => {
   try {
     const response = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
     const data = await response.json();
-    return data.promedio || data.price || 36.5; // Fallback
+    return data.promedio || data.price || 36.5; 
   } catch (error) {
     console.error("Error fetching BCV rate:", error);
     return 36.5;

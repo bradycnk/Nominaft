@@ -1,11 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
-import Sidebar from './components/Sidebar';
-import EmployeeTable from './components/EmployeeTable';
-import DashboardOverview from './components/DashboardOverview';
-import PayrollProcessor from './components/PayrollProcessor';
-import { supabase } from './lib/supabase';
-import { ConfigGlobal } from './types';
+import Sidebar from './components/Sidebar.tsx';
+import EmployeeTable from './components/EmployeeTable.tsx';
+import DashboardOverview from './components/DashboardOverview.tsx';
+import PayrollProcessor from './components/PayrollProcessor.tsx';
+import { supabase } from './lib/supabase.ts';
+import { ConfigGlobal } from './types.ts';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -13,12 +13,16 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const fetchConfig = async () => {
-      const { data } = await supabase.from('configuracion_global').select('*').single();
-      if (data) setConfig(data);
+      try {
+        const { data, error } = await supabase.from('configuracion_global').select('*').single();
+        if (error) throw error;
+        if (data) setConfig(data);
+      } catch (err) {
+        console.error("Error cargando configuración:", err);
+      }
     };
     fetchConfig();
 
-    // Suscripción para cambios en configuración (tasa BCV)
     const channel = supabase.channel('config-updates')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'configuracion_global' }, 
       (payload) => setConfig(payload.new as ConfigGlobal))

@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
-import { Empleado } from '../types';
+import { supabase } from '../lib/supabase.ts';
+import { Empleado } from '../types.ts';
 
 const EmployeeTable: React.FC = () => {
   const [employees, setEmployees] = useState<Empleado[]>([]);
@@ -10,14 +10,12 @@ const EmployeeTable: React.FC = () => {
   useEffect(() => {
     fetchEmployees();
 
-    // Suscripción en tiempo real
     const channel = supabase
       .channel('schema-db-changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'empleados' },
-        (payload) => {
-          console.log('Change received!', payload);
+        () => {
           fetchEmployees();
         }
       )
@@ -30,14 +28,19 @@ const EmployeeTable: React.FC = () => {
 
   const fetchEmployees = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('empleados')
-      .select('*')
-      .order('nombre', { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from('empleados')
+        .select('*')
+        .order('nombre', { ascending: true });
 
-    if (error) console.error('Error fetching employees:', error);
-    else setEmployees(data || []);
-    setLoading(false);
+      if (error) throw error;
+      setEmployees(data || []);
+    } catch (error) {
+      console.error('Error fetching employees:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
