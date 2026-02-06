@@ -14,7 +14,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     const load = async () => {
       const { data } = await supabase
         .from('empleados')
-        .select('*, sucursales(nombre_id)')
+        .select('*, sucursales(id, nombre_id, rif, es_principal)')
         .eq('activo', true);
       setEmployees(data || []);
     };
@@ -54,7 +54,8 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     
     doc.setFontSize(10);
     doc.text(`SUCURSAL: ${emp.sucursales?.nombre_id || 'Principal'}`, margin, 28);
-    doc.text(`RIF: ${emp.rif || 'J-00000000-0'}`, margin, 33);
+    // Usamos el RIF de la sucursal si existe, sino el RIF genérico del empleado o placeholder
+    doc.text(`RIF PATRONAL: ${emp.sucursales?.rif || emp.rif || 'J-00000000-0'}`, margin, 33);
     
     doc.setFontSize(14);
     doc.text('RECIBO DE PAGO DE NÓMINA', 105, 50, { align: 'center' });
@@ -62,7 +63,8 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     doc.text(`PERIODO: ${currentMonth.toUpperCase()}`, 105, 57, { align: 'center' });
 
     // Información Empleado
-    doc.autoTable({
+    // FIX: Cast doc to any to access the autoTable method provided by the jspdf-autotable plugin
+    (doc as any).autoTable({
       startY: 65,
       head: [['DATOS DEL TRABAJADOR', '']],
       body: [
@@ -77,7 +79,8 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     });
 
     // Detalle de Cálculos
-    doc.autoTable({
+    // FIX: Cast doc to any to access the autoTable method provided by the jspdf-autotable plugin
+    (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 10,
       head: [['DESCRIPCIÓN', 'ASIGNACIONES (Bs.)', 'DEDUCCIONES (Bs.)']],
       body: [

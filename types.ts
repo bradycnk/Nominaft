@@ -49,7 +49,10 @@ export interface Empleado {
   bono_alimentacion_frecuencia?: string;
 
   sucursales?: {
+    id: string;
     nombre_id: string;
+    rif: string;
+    es_principal: boolean;
   };
   cargas_familiares?: CargaFamiliar[];
 }
@@ -57,10 +60,12 @@ export interface Empleado {
 export interface Sucursal {
   id: string;
   nombre_id: string;
+  rif: string;
   direccion: string;
   administrador: string;
   correo_admin: string;
   logo_url?: string;
+  es_principal: boolean;
 }
 
 export interface Nomina {
