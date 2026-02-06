@@ -34,7 +34,7 @@ const EmployeeTable: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('empleados')
-        .select('*')
+        .select('*, sucursales(nombre_id)')
         .order('nombre', { ascending: true });
 
       if (error) throw error;
@@ -57,55 +57,55 @@ const EmployeeTable: React.FC = () => {
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-      <div className="p-6 border-b border-slate-200 flex justify-between items-center">
+    <div className="bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden">
+      <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-white">
         <div>
-          <h2 className="text-xl font-bold text-slate-800">Nómina de Empleados</h2>
-          <p className="text-xs text-slate-500 mt-1">Total registrados: {employees.length}</p>
+          <h2 className="text-xl font-black text-slate-800 tracking-tight">Nómina de Empleados</h2>
+          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Total registrados: {employees.length}</p>
         </div>
         <button 
           onClick={handleAddClick}
-          className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all shadow-lg shadow-emerald-100 transform active:scale-95"
+          className="bg-[#10b981] hover:bg-emerald-600 text-white px-8 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-100 transform active:scale-95 flex items-center gap-2"
         >
-          + Agregar Empleado
+          <span className="text-base">+</span> Agregar Empleado
         </button>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full text-left">
-          <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+          <thead className="bg-[#F8F9FB] text-slate-400 text-[10px] font-black uppercase tracking-[0.15em] border-b border-slate-50">
             <tr>
-              <th className="px-6 py-4 font-bold text-center w-16">Foto</th>
-              <th className="px-6 py-4 font-bold">Empleado</th>
-              <th className="px-6 py-4 font-bold">Cédula / RIF</th>
-              <th className="px-6 py-4 font-bold">Cargo</th>
-              <th className="px-6 py-4 font-bold text-right">Salario (USD)</th>
-              <th className="px-6 py-4 font-bold">Estatus</th>
-              <th className="px-6 py-4 font-bold text-center">Acciones</th>
+              <th className="px-8 py-5 text-center w-20">Foto</th>
+              <th className="px-8 py-5">Empleado / Sede</th>
+              <th className="px-8 py-5">Cédula / RIF</th>
+              <th className="px-8 py-5">Cargo</th>
+              <th className="px-8 py-5 text-right">Salario (USD/BS)</th>
+              <th className="px-8 py-5">Estatus</th>
+              <th className="px-8 py-5 text-center">Acciones</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-50">
             {loading && employees.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-10 text-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="w-6 h-6 border-2 border-emerald-600 border-t-transparent animate-spin rounded-full"></div>
-                    <span className="text-slate-400 text-sm font-medium">Actualizando lista...</span>
+                <td colSpan={7} className="px-8 py-20 text-center">
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent animate-spin rounded-full"></div>
+                    <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Sincronizando nómina...</span>
                   </div>
                 </td>
               </tr>
             ) : employees.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-10 text-center">
-                  <div className="text-slate-300 text-4xl mb-2">📁</div>
-                  <p className="text-slate-400 text-sm">No se encontraron empleados registrados.</p>
+                <td colSpan={7} className="px-8 py-20 text-center">
+                  <div className="text-slate-200 text-5xl mb-4">📂</div>
+                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">No hay trabajadores en el sistema</p>
                 </td>
               </tr>
             ) : (
               employees.map((emp) => (
-                <tr key={emp.id} className="hover:bg-slate-50/80 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="w-12 h-12 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center overflow-hidden shadow-sm">
+                <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <td className="px-8 py-6">
+                    <div className="w-14 h-14 rounded-full bg-slate-100 border-2 border-white shadow-md flex items-center justify-center overflow-hidden transition-transform group-hover:scale-110">
                       {emp.foto_url ? (
                         <img 
                           src={emp.foto_url} 
@@ -116,55 +116,62 @@ const EmployeeTable: React.FC = () => {
                           }}
                         />
                       ) : (
-                        <span className="text-emerald-700 font-bold text-sm">
+                        <span className="text-emerald-600 font-black text-xs uppercase">
                           {emp.nombre[0]}{emp.apellido[0]}
                         </span>
                       )}
                     </div>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-8 py-6">
                     <div>
-                      <div className="font-bold text-slate-800 leading-tight">{emp.nombre} {emp.apellido}</div>
-                      <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Ingreso: {new Date(emp.fecha_ingreso).toLocaleDateString('es-VE')}</div>
+                      <div className="font-black text-slate-800 text-sm uppercase leading-tight">{emp.nombre} {emp.apellido}</div>
+                      <div className="text-[10px] font-black text-emerald-500 uppercase tracking-tighter mt-1 flex items-center gap-1">
+                        <span className="text-rose-400">📍</span> {emp.sucursales?.nombre_id || 'Sin Sede Asignada'}
+                      </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="text-slate-600 font-medium font-mono text-xs">{emp.cedula}</div>
-                    <div className="text-[10px] text-slate-400 font-mono">{emp.rif || 'Sin RIF'}</div>
+                  <td className="px-8 py-6">
+                    <div className="text-slate-600 font-bold font-mono text-xs">{emp.cedula || '---'}</div>
+                    <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tight mt-0.5">{emp.rif || 'Sin RIF'}</div>
                   </td>
-                  <td className="px-6 py-4">
-                    <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded-md text-[11px] font-bold uppercase">{emp.cargo}</span>
+                  <td className="px-8 py-6">
+                    <span className="px-3 py-1.5 bg-slate-100 text-slate-500 rounded-lg text-[10px] font-black uppercase tracking-wider border border-slate-200">
+                      {emp.cargo || 'General'}
+                    </span>
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="font-mono font-bold text-emerald-600">
-                      ${Number(emp.salario_usd).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  <td className="px-8 py-6 text-right">
+                    <div className="font-bold text-emerald-600 text-base leading-none">
+                      ${Number(emp.salario_usd || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-bold mt-1 tracking-tighter">
+                      Bs. {Number(emp.salario_base_vef || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
                     </div>
                   </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black tracking-wider uppercase ${
-                      emp.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                  <td className="px-8 py-6">
+                    <span className={`px-3 py-1 rounded-full text-[9px] font-black tracking-[0.1em] uppercase ${
+                      emp.activo ? 'bg-emerald-100/50 text-emerald-600' : 'bg-rose-100 text-rose-600'
                     }`}>
                       {emp.activo ? 'ACTIVO' : 'INACTIVO'}
                     </span>
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="flex justify-center gap-2">
+                  <td className="px-8 py-6 text-center">
+                    <div className="flex justify-center gap-1">
                       <button 
                         onClick={() => handleEditClick(emp)}
-                        className="p-2 hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 rounded-lg transition-all"
-                        title="Editar Empleado"
+                        className="p-2.5 hover:bg-slate-100 text-slate-300 hover:text-amber-500 rounded-xl transition-all"
+                        title="Editar Expediente"
                       >
-                        ✏️
+                        <span className="text-lg">✏️</span>
                       </button>
                       {emp.cv_url && (
                         <a 
                           href={emp.cv_url} 
                           target="_blank" 
                           rel="noreferrer"
-                          className="p-2 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg transition-all" 
-                          title="Ver CV"
+                          className="p-2.5 hover:bg-slate-100 text-slate-300 hover:text-sky-500 rounded-xl transition-all" 
+                          title="Ver Curriculum"
                         >
-                          📄
+                          <span className="text-lg">📄</span>
                         </a>
                       )}
                     </div>
@@ -174,6 +181,9 @@ const EmployeeTable: React.FC = () => {
             )}
           </tbody>
         </table>
+      </div>
+      <div className="p-6 bg-[#F8F9FB] border-t border-slate-50 flex justify-center">
+         <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.3em]">Gestión de Nómina Indexada - LOTTT 2024</p>
       </div>
 
       <EmployeeModal 

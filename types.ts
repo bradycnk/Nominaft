@@ -7,6 +7,14 @@ export interface ConfigGlobal {
   updated_at: string;
 }
 
+export interface CargaFamiliar {
+  id?: string;
+  nombre_completo: string;
+  parentesco: 'Hijo' | 'Hija' | 'Cónyuge' | 'Padre' | 'Madre';
+  fecha_nacimiento: string;
+  es_menor: boolean;
+}
+
 export interface Empleado {
   id: string;
   cedula: string;
@@ -15,10 +23,44 @@ export interface Empleado {
   apellido: string;
   cargo: string;
   fecha_ingreso: string;
+  fecha_inicio_contrato?: string;
   salario_usd: number;
+  salario_base_vef: number;
   activo: boolean;
   foto_url?: string;
   cv_url?: string;
+  sucursal_id?: string;
+  
+  // Nuevos campos Legales/Personales
+  fecha_nacimiento?: string;
+  lugar_nacimiento?: string;
+  nacionalidad?: string;
+  sexo?: 'M' | 'F' | 'Otro';
+  estado_civil?: 'Soltero' | 'Casado' | 'Divorciado' | 'Viudo' | 'Concubinato';
+  direccion_habitacion?: string;
+  telefono_movil?: string;
+  telefono_fijo?: string;
+  email_personal?: string;
+  contacto_emergencia_nombre?: string;
+  contacto_emergencia_telefono?: string;
+  tipo_contrato?: string;
+  departamento?: string;
+  tipo_jornada?: string;
+  bono_alimentacion_frecuencia?: string;
+
+  sucursales?: {
+    nombre_id: string;
+  };
+  cargas_familiares?: CargaFamiliar[];
+}
+
+export interface Sucursal {
+  id: string;
+  nombre_id: string;
+  direccion: string;
+  administrador: string;
+  correo_admin: string;
+  logo_url?: string;
 }
 
 export interface Nomina {
