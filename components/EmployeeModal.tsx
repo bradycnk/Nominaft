@@ -181,7 +181,8 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
     setFamily(newFamily);
   };
 
-  const inputClasses = "w-full px-5 py-4 rounded-xl border-none bg-[#2D2D3A] text-white font-medium outline-none transition-all focus:ring-2 focus:ring-emerald-500/50 placeholder:text-slate-500";
+  // Change: Updated input classes to use light background and dark text for better visibility
+  const inputClasses = "w-full px-5 py-4 rounded-xl border border-slate-200 bg-white text-slate-800 font-medium outline-none transition-all focus:ring-2 focus:ring-emerald-500/50 placeholder:text-slate-400";
   const labelClasses = "text-[10px] font-black text-emerald-500 uppercase mb-2 block tracking-wider";
 
   return (

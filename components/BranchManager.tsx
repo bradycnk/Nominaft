@@ -1,13 +1,26 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase.ts';
 import { Sucursal } from '../types.ts';
 
-// Fix: Completed the BranchManager component implementation and added default export
 const BranchManager: React.FC = () => {
   const [branches, setBranches] = useState<Sucursal[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  
+  // Form Data
+  const [formData, setFormData] = useState({
+    nombre_id: '',
+    rif: '',
+    direccion: '',
+    administrador: '',
+    correo_admin: '',
+    es_principal: false,
+    logo_url: ''
+  });
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchBranches();
@@ -30,6 +43,73 @@ const BranchManager: React.FC = () => {
     }
   };
 
+  const handleOpenModal = () => {
+    setFormData({
+      nombre_id: '',
+      rif: '',
+      direccion: '',
+      administrador: '',
+      correo_admin: '',
+      es_principal: false,
+      logo_url: ''
+    });
+    setLogoPreview(null);
+    setShowModal(true);
+  };
+
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setLogoPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUploading(true);
+
+    try {
+      let finalLogoUrl = formData.logo_url;
+      const file = fileInputRef.current?.files?.[0];
+
+      if (file) {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `logos/logo_${Date.now()}.${fileExt}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('expedientes')
+          .upload(fileName, file);
+        
+        if (uploadError) throw uploadError;
+        
+        const { data: { publicUrl } } = supabase.storage
+          .from('expedientes')
+          .getPublicUrl(fileName);
+          
+        finalLogoUrl = publicUrl;
+      }
+
+      const payload = {
+        ...formData,
+        logo_url: finalLogoUrl
+      };
+
+      const { error } = await supabase.from('sucursales').insert([payload]);
+      if (error) throw error;
+
+      setShowModal(false);
+      fetchBranches();
+    } catch (err: any) {
+      alert('Error: ' + err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
       <div className="p-6 border-b border-slate-200 bg-white flex justify-between items-center">
@@ -38,7 +118,7 @@ const BranchManager: React.FC = () => {
           <p className="text-sm text-slate-500 font-medium">Administre las sedes físicas de la farmacia</p>
         </div>
         <button 
-          onClick={() => setShowModal(true)}
+          onClick={handleOpenModal}
           className="bg-[#10b981] hover:bg-emerald-600 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-50 active:scale-95"
         >
           + Agregar Sucursal
@@ -120,19 +200,136 @@ const BranchManager: React.FC = () => {
       </div>
       
       {showModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-[2.5rem] p-10 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-300">
-            <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center text-3xl mb-6">⚠️</div>
-            <h3 className="text-2xl font-black text-slate-800 mb-3 tracking-tight">Acceso Restringido</h3>
-            <p className="text-slate-500 mb-8 font-medium leading-relaxed">
-              La creación de nuevas sucursales requiere privilegios de <span className="text-slate-900 font-bold">Administrador General</span>. Por favor, contacte al departamento de sistemas para habilitar nuevas sedes.
-            </p>
-            <button 
-              onClick={() => setShowModal(false)} 
-              className="w-full bg-[#1E1E2D] text-white py-5 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl hover:bg-black transition-all active:scale-95"
-            >
-              Entendido
-            </button>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200 overflow-y-auto">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-4xl w-full shadow-2xl animate-in zoom-in-95 duration-300 relative">
+             <button onClick={() => setShowModal(false)} className="absolute top-6 right-8 text-slate-400 hover:text-slate-600">✕</button>
+             
+             <div className="mb-8">
+               <h3 className="text-2xl font-black text-slate-800 tracking-tight">Registrar Nueva Sede</h3>
+               <p className="text-slate-400 text-xs font-black uppercase tracking-widest mt-1">Configuración Fiscal de la Entidad</p>
+             </div>
+
+             <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-10">
+               {/* Left: Logo */}
+               <div className="w-full md:w-1/3 flex flex-col items-center">
+                  <div 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full aspect-square bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 hover:border-emerald-400 cursor-pointer flex items-center justify-center relative overflow-hidden group transition-all"
+                  >
+                    {logoPreview ? (
+                      <img src={logoPreview} alt="Logo Preview" className="w-full h-full object-contain p-4" />
+                    ) : (
+                      <div className="text-center">
+                        <span className="text-4xl block mb-2">🏢</span>
+                        <span className="text-[10px] font-black text-slate-300 uppercase">Sin Logo</span>
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold transition-opacity">
+                      Cambiar Logo
+                    </div>
+                  </div>
+                  <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleLogoChange} />
+                  <button 
+                    type="button" 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="mt-4 bg-[#1E293B] text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest w-full hover:bg-black transition-all"
+                  >
+                    📷 Cambiar Logo Principal
+                  </button>
+               </div>
+
+               {/* Right: Inputs */}
+               <div className="flex-1 space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div>
+                      <label className="text-[10px] font-black text-emerald-500 uppercase tracking-wider mb-2 block">Nombre Comercial</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="Farma Salud Principal"
+                        className="w-full bg-slate-50 border border-slate-200 text-slate-900 px-4 py-3 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
+                        value={formData.nombre_id}
+                        onChange={e => setFormData({...formData, nombre_id: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-emerald-500 uppercase tracking-wider mb-2 block">RIF Patronal</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="J-00000000-0"
+                        className="w-full bg-slate-50 border border-slate-200 text-slate-900 px-4 py-3 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
+                        value={formData.rif}
+                        onChange={e => setFormData({...formData, rif: e.target.value})}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-black text-emerald-500 uppercase tracking-wider mb-2 block">Dirección Fiscal Completa</label>
+                    <textarea 
+                      required
+                      className="w-full bg-slate-50 border border-slate-200 text-slate-900 px-4 py-3 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium h-24 resize-none"
+                      value={formData.direccion}
+                      onChange={e => setFormData({...formData, direccion: e.target.value})}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div>
+                      <label className="text-[10px] font-black text-emerald-500 uppercase tracking-wider mb-2 block">Administrador</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="Nombre del Regente"
+                        className="w-full bg-slate-50 border border-slate-200 text-slate-900 px-4 py-3 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
+                        value={formData.administrador}
+                        onChange={e => setFormData({...formData, administrador: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-emerald-500 uppercase tracking-wider mb-2 block">Email Admin</label>
+                      <input 
+                        type="email" 
+                        required
+                        placeholder="correo@empresa.com"
+                        className="w-full bg-slate-50 border border-slate-200 text-slate-900 px-4 py-3 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
+                        value={formData.correo_admin}
+                        onChange={e => setFormData({...formData, correo_admin: e.target.value})}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <label className="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-100 rounded-xl cursor-pointer hover:bg-emerald-100 transition-colors">
+                      <input 
+                        type="checkbox" 
+                        className="w-5 h-5 text-emerald-600 rounded focus:ring-emerald-500"
+                        checked={formData.es_principal}
+                        onChange={e => setFormData({...formData, es_principal: e.target.checked})}
+                      />
+                      <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wide">Marcar como Sede Principal (Dirección Fiscal Principal)</span>
+                    </label>
+                  </div>
+
+                  <div className="flex gap-4 pt-4">
+                    <button 
+                      type="button" 
+                      onClick={() => setShowModal(false)}
+                      className="flex-1 py-4 text-slate-400 font-black uppercase text-[10px] tracking-[0.2em] border border-slate-200 rounded-xl hover:bg-slate-50 transition-all"
+                    >
+                      Descartar
+                    </button>
+                    <button 
+                      type="submit" 
+                      disabled={uploading}
+                      className="flex-[2] bg-[#1E1E2D] text-white py-4 rounded-xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl hover:bg-black transition-all disabled:opacity-70 flex items-center justify-center gap-2"
+                    >
+                      {uploading ? 'Guardando...' : 'Confirmar Registro'}
+                    </button>
+                  </div>
+               </div>
+             </form>
           </div>
         </div>
       )}
