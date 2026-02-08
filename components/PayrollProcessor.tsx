@@ -119,6 +119,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
         const imgProps = doc.getImageProperties(LOGO_URL);
         const imgWidth = 30;
         const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
+        // Logo en su posición original (parte superior izquierda)
         doc.addImage(LOGO_URL, 'JPEG', 15, 10, imgWidth, imgHeight);
     } catch (e) {
         console.warn("No se pudo cargar el logo", e);
@@ -127,52 +128,49 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     // Datos Empresa
     doc.setFont("courier", "bold");
     doc.setFontSize(14);
+    // Título centrado arriba
     doc.text("RECIBO DE PAGO DE NÓMINA", pageWidth / 2, 20, { align: "center" });
     
     doc.setFontSize(10);
     doc.setFont("courier", "normal");
     
-    doc.text("==========================================================================", 15, 30);
+    // Desplazamos todo el bloque de texto hacia abajo (Y += 20) para que empiece DEBAJO del logo
+    doc.text("==========================================================================", 15, 50);
     
-    doc.text(`EMPRESA: ${emp.sucursales?.nombre_id || 'FarmaNomina C.A.'}`, 15, 35);
-    doc.text(`RIF: ${emp.sucursales?.rif || 'J-12345678-9'}`, 140, 35);
+    doc.text(`EMPRESA: ${emp.sucursales?.nombre_id || 'FarmaNomina C.A.'}`, 15, 55);
+    doc.text(`RIF: ${emp.sucursales?.rif || 'J-12345678-9'}`, 140, 55);
     
     // Truncar dirección para evitar desbordamiento
     const direccion = emp.sucursales?.direccion || 'Sede Principal';
     const direccionTruncada = direccion.length > 60 ? direccion.substring(0, 60) + '...' : direccion;
-    doc.text(`DIRECCIÓN: ${direccionTruncada}`, 15, 40);
+    doc.text(`DIRECCIÓN: ${direccionTruncada}`, 15, 60);
     
-    doc.text("==========================================================================", 15, 45);
+    doc.text("==========================================================================", 15, 65);
 
-    // Datos del Trabajador - Coordenadas ajustadas para evitar solapamiento
-    doc.text("DATOS DEL TRABAJADOR", 15, 50);
-    doc.text(`Nombre: ${emp.nombre} ${emp.apellido}`, 15, 55);
-    doc.text(`Cargo: ${emp.cargo || 'General'}`, 15, 60);
+    // Datos del Trabajador
+    doc.text("DATOS DEL TRABAJADOR", 15, 70);
+    doc.text(`Nombre: ${emp.nombre} ${emp.apellido}`, 15, 75);
+    doc.text(`Cargo: ${emp.cargo || 'General'}`, 15, 80);
     
     const today = new Date();
     const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('es-VE');
     const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).toLocaleDateString('es-VE');
     
-    doc.text(`Período de Pago: Mensual`, 15, 65);
-    doc.text(`Salario Base Diario: Bs. ${salarioDiarioBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 15, 70);
+    doc.text(`Período de Pago: Mensual`, 15, 85);
+    doc.text(`Salario Base Diario: Bs. ${salarioDiarioBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 15, 90);
 
-    // Columna Derecha de Datos Trabajador (Movida a x=115)
-    doc.text(`C.I.: ${emp.cedula}`, 115, 55);
-    doc.text(`Fecha Ingreso: ${emp.fecha_ingreso}`, 115, 60);
-    doc.text(`Desde: ${firstDay}  Hasta: ${lastDay}`, 115, 65);
-    doc.text(`Salario Base Hora: Bs. ${salarioHoraBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 115, 70);
+    // Columna Derecha de Datos Trabajador
+    doc.text(`C.I.: ${emp.cedula}`, 115, 75);
+    doc.text(`Fecha Ingreso: ${emp.fecha_ingreso}`, 115, 80);
+    doc.text(`Desde: ${firstDay}  Hasta: ${lastDay}`, 115, 85);
+    doc.text(`Salario Base Hora: Bs. ${salarioHoraBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 115, 90);
 
-    doc.text("--------------------------------------------------------------------------", 15, 75);
+    doc.text("--------------------------------------------------------------------------", 15, 95);
 
-    // Tabla de Conceptos - Columnas reorganizadas para dar más espacio
-    let y = 82;
+    // Tabla de Conceptos
+    // Iniciamos más abajo
+    let y = 102; 
     doc.setFont("courier", "bold");
-    
-    // Coordenadas X para columnas:
-    // Concepto: 15 (Izq)
-    // Cantidad: 125 (Der) -> Más espacio para el texto del concepto
-    // Asignaciones: 160 (Der)
-    // Deducciones: 195 (Der)
     
     doc.text("CONCEPTOS", 15, y);
     doc.text("CANTIDAD", 125, y, { align: "right" });
@@ -187,9 +185,9 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     // Filas de Asignaciones
     const addRow = (concepto: string, cantidad: string, asignacion: number | null, deduccion: number | null) => {
         doc.text(concepto, 15, y);
-        if (cantidad) doc.text(cantidad, 125, y, { align: "right" }); // Ajustado a 125
-        if (asignacion !== null) doc.text(`${asignacion.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 160, y, { align: "right" }); // Ajustado a 160
-        if (deduccion !== null) doc.text(`${deduccion.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 195, y, { align: "right" }); // Ajustado a 195
+        if (cantidad) doc.text(cantidad, 125, y, { align: "right" });
+        if (asignacion !== null) doc.text(`${asignacion.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 160, y, { align: "right" });
+        if (deduccion !== null) doc.text(`${deduccion.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 195, y, { align: "right" });
         y += 5;
     };
 
@@ -234,7 +232,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
 
     // Cestaticket (No Salarial)
     doc.text("(+) Cestaticket Socialista", 15, y);
-    doc.text("(No Salarial)", 105, y, { align: "center" }); // Centrado
+    doc.text("(No Salarial)", 105, y, { align: "center" }); 
     doc.text(`${calc.bono_alimentacion_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs.`, 195, y, { align: "right" });
 
     y += 6;
