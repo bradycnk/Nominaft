@@ -31,6 +31,7 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
   const [family, setFamily] = useState<CargaFamiliar[]>([]);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [cvName, setCvName] = useState<string | null>(null);
+  const [tasaBcv, setTasaBcv] = useState<number>(0);
   
   const [formData, setFormData] = useState<EmployeeForm>({
     cedula: '', rif: '', nombre: '', apellido: '', cargo: '',
@@ -51,8 +52,13 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
 
   useEffect(() => {
     const init = async () => {
+      // Cargar Sucursales
       const { data: bData } = await supabase.from('sucursales').select('id, nombre_id').order('nombre_id');
       if (bData) setBranches(bData);
+
+      // Cargar Tasa BCV para cálculos
+      const { data: configData } = await supabase.from('configuracion_global').select('tasa_bcv').single();
+      if (configData) setTasaBcv(configData.tasa_bcv);
 
       if (employeeToEdit) {
         const { id, sucursales, cargas_familiares, ...rest } = employeeToEdit;
@@ -186,6 +192,23 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
     const newFamily = [...family];
     newFamily[index] = { ...newFamily[index], [field]: value };
     setFamily(newFamily);
+  };
+
+  // Manejo especial para Salario Base VEF que recalcula USD
+  const handleSalarioBsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    const bsAmount = isNaN(val) ? 0 : val;
+    
+    // Cálculo: USD = BS / Tasa
+    const usdAmount = (tasaBcv > 0 && bsAmount > 0) 
+      ? parseFloat((bsAmount / tasaBcv).toFixed(2)) 
+      : 0;
+
+    setFormData({
+      ...formData,
+      salario_base_vef: bsAmount,
+      salario_usd: usdAmount
+    });
   };
 
   const inputClasses = "w-full px-5 py-4 rounded-xl border border-slate-200 bg-white text-slate-800 font-medium outline-none transition-all focus:ring-2 focus:ring-emerald-500/50 placeholder:text-slate-400";
@@ -362,16 +385,43 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
                   </div>
                </div>
 
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+               {/* Sección de Salarios con Cálculo Automático */}
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative items-start">
                   <div>
                     <label className={labelClasses}>Salario Base Mensual (BS)</label>
-                    <input type="number" step="0.01" className={`${inputClasses} text-2xl font-bold py-5`} value={formData.salario_base_vef} onChange={e => setFormData({...formData, salario_base_vef: parseFloat(e.target.value)})} />
+                    <input 
+                      type="number" 
+                      step="0.01" 
+                      className={`${inputClasses} text-2xl font-bold py-5`} 
+                      value={formData.salario_base_vef} 
+                      onChange={handleSalarioBsChange} 
+                    />
+                    <div className="text-[9px] text-slate-400 mt-2 font-bold uppercase tracking-wider">
+                      Tasa BCV Aplicada: <span className="text-emerald-600">Bs. {tasaBcv}</span>
+                    </div>
                   </div>
+
+                  {/* Flecha indicativa visual (Solo decorativa/UX) */}
+                  <div className="hidden md:flex absolute left-1/2 top-10 -translate-x-1/2 justify-center pointer-events-none text-slate-300 text-2xl">
+                    ➔
+                  </div>
+
                   <div>
-                    <label className={labelClasses}>Ref. USD Indexado</label>
+                    <label className={labelClasses}>Ref. USD Indexado (Calculado)</label>
                     <div className="relative">
-                       <input type="number" step="0.01" className={`${inputClasses} text-2xl font-bold py-5 pr-12`} value={formData.salario_usd} onChange={e => setFormData({...formData, salario_usd: parseFloat(e.target.value)})} />
+                       <input 
+                         type="number" 
+                         step="0.01" 
+                         readOnly
+                         className={`${inputClasses} text-2xl font-bold py-5 pr-12 bg-slate-50 text-slate-500`} 
+                         value={formData.salario_usd} 
+                         // USD es calculado, pero permitimos override manual si se desea
+                         onChange={e => setFormData({...formData, salario_usd: parseFloat(e.target.value)})} 
+                       />
                        <span className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-500 text-sm">🔒</span>
+                    </div>
+                    <div className="text-[9px] text-slate-400 mt-2 font-bold uppercase tracking-wider">
+                      Valor Referencial
                     </div>
                   </div>
                </div>
