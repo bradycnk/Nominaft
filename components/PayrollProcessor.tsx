@@ -115,7 +115,6 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     const pageWidth = doc.internal.pageSize.width;
     
     // --- Header con Logo ---
-    // Intentamos cargar el logo, si falla usamos texto
     try {
         const imgProps = doc.getImageProperties(LOGO_URL);
         const imgWidth = 30;
@@ -125,7 +124,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
         console.warn("No se pudo cargar el logo", e);
     }
 
-    // Datos Empresa (Centrado o al lado del logo)
+    // Datos Empresa
     doc.setFont("courier", "bold");
     doc.setFontSize(14);
     doc.text("RECIBO DE PAGO DE NÓMINA", pageWidth / 2, 20, { align: "center" });
@@ -133,21 +132,23 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     doc.setFontSize(10);
     doc.setFont("courier", "normal");
     
-    // Línea separadora doble
     doc.text("==========================================================================", 15, 30);
     
     doc.text(`EMPRESA: ${emp.sucursales?.nombre_id || 'FarmaNomina C.A.'}`, 15, 35);
     doc.text(`RIF: ${emp.sucursales?.rif || 'J-12345678-9'}`, 140, 35);
-    doc.text(`DIRECCIÓN: ${emp.sucursales?.direccion ? emp.sucursales.direccion.substring(0, 50) + '...' : 'Sede Principal'}`, 15, 40);
+    
+    // Truncar dirección para evitar desbordamiento
+    const direccion = emp.sucursales?.direccion || 'Sede Principal';
+    const direccionTruncada = direccion.length > 60 ? direccion.substring(0, 60) + '...' : direccion;
+    doc.text(`DIRECCIÓN: ${direccionTruncada}`, 15, 40);
     
     doc.text("==========================================================================", 15, 45);
 
-    // Datos del Trabajador
+    // Datos del Trabajador - Coordenadas ajustadas para evitar solapamiento
     doc.text("DATOS DEL TRABAJADOR", 15, 50);
     doc.text(`Nombre: ${emp.nombre} ${emp.apellido}`, 15, 55);
     doc.text(`Cargo: ${emp.cargo || 'General'}`, 15, 60);
     
-    // Fechas
     const today = new Date();
     const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('es-VE');
     const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).toLocaleDateString('es-VE');
@@ -155,19 +156,27 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     doc.text(`Período de Pago: Mensual`, 15, 65);
     doc.text(`Salario Base Diario: Bs. ${salarioDiarioBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 15, 70);
 
-    doc.text(`C.I.: ${emp.cedula}`, 120, 55);
-    doc.text(`Fecha Ingreso: ${emp.fecha_ingreso}`, 120, 60);
-    doc.text(`Desde: ${firstDay}  Hasta: ${lastDay}`, 120, 65);
-    doc.text(`Salario Base Hora: Bs. ${salarioHoraBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 120, 70);
+    // Columna Derecha de Datos Trabajador (Movida a x=115)
+    doc.text(`C.I.: ${emp.cedula}`, 115, 55);
+    doc.text(`Fecha Ingreso: ${emp.fecha_ingreso}`, 115, 60);
+    doc.text(`Desde: ${firstDay}  Hasta: ${lastDay}`, 115, 65);
+    doc.text(`Salario Base Hora: Bs. ${salarioHoraBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 115, 70);
 
     doc.text("--------------------------------------------------------------------------", 15, 75);
 
-    // Tabla de Conceptos (Simulando formato texto/terminal de la imagen)
+    // Tabla de Conceptos - Columnas reorganizadas para dar más espacio
     let y = 82;
     doc.setFont("courier", "bold");
+    
+    // Coordenadas X para columnas:
+    // Concepto: 15 (Izq)
+    // Cantidad: 125 (Der) -> Más espacio para el texto del concepto
+    // Asignaciones: 160 (Der)
+    // Deducciones: 195 (Der)
+    
     doc.text("CONCEPTOS", 15, y);
-    doc.text("CANTIDAD", 85, y, { align: "right" });
-    doc.text("ASIGNACIONES", 145, y, { align: "right" });
+    doc.text("CANTIDAD", 125, y, { align: "right" });
+    doc.text("ASIGNACIONES", 160, y, { align: "right" });
     doc.text("DEDUCCIONES", 195, y, { align: "right" });
     doc.setFont("courier", "normal");
     
@@ -178,9 +187,9 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     // Filas de Asignaciones
     const addRow = (concepto: string, cantidad: string, asignacion: number | null, deduccion: number | null) => {
         doc.text(concepto, 15, y);
-        if (cantidad) doc.text(cantidad, 85, y, { align: "right" });
-        if (asignacion !== null) doc.text(`${asignacion.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 145, y, { align: "right" });
-        if (deduccion !== null) doc.text(`${deduccion.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 195, y, { align: "right" });
+        if (cantidad) doc.text(cantidad, 125, y, { align: "right" }); // Ajustado a 125
+        if (asignacion !== null) doc.text(`${asignacion.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 160, y, { align: "right" }); // Ajustado a 160
+        if (deduccion !== null) doc.text(`${deduccion.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 195, y, { align: "right" }); // Ajustado a 195
         y += 5;
     };
 
@@ -189,11 +198,9 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
         if (totalHorasExtras > 0) addRow("(+) Horas Extras Diurnas", `${totalHorasExtras.toFixed(1)} Horas`, montoHorasExtras, null);
         if (diasDescansoTrabajados > 0) addRow("(+) Días Descanso Trabajados", `${diasDescansoTrabajados} Días`, montoDiasDescanso, null);
     } else {
-        // Fallback si no hay asistencia
         addRow("(+) Salario Básico Mensual", "30 Días", calc.sueldo_base_vef, null);
     }
 
-    // Espacio
     y += 2;
     
     // Filas de Deducciones
@@ -208,7 +215,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     // Subtotales
     doc.setFont("courier", "bold");
     doc.text("SUB-TOTALES:", 15, y);
-    doc.text(`${baseAsignaciones.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 145, y, { align: "right" });
+    doc.text(`${baseAsignaciones.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 160, y, { align: "right" });
     doc.text(`${totalDeduccionesReal.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 195, y, { align: "right" });
     
     y += 5;
@@ -227,13 +234,13 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
 
     // Cestaticket (No Salarial)
     doc.text("(+) Cestaticket Socialista", 15, y);
-    doc.text("(No Salarial)", 100, y, { align: "center" });
+    doc.text("(No Salarial)", 105, y, { align: "center" }); // Centrado
     doc.text(`${calc.bono_alimentacion_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs.`, 195, y, { align: "right" });
 
     y += 6;
     doc.text("==========================================================================", 15, y);
 
-    // Pie de página con firmas
+    // Pie de página
     y += 20;
     doc.text("He recibido a mi entera satisfacción el monto neto a pagar...", 15, y);
     
