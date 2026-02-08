@@ -53,6 +53,7 @@ export interface Empleado {
     nombre_id: string;
     rif: string;
     es_principal: boolean;
+    direccion?: string;
   };
   cargas_familiares?: CargaFamiliar[];
 }

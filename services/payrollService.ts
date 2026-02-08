@@ -50,3 +50,21 @@ export const fetchBcvRate = async (): Promise<number> => {
     return 36.5;
   }
 };
+
+// --- Utilidades para Recibo PDF y Asistencia ---
+
+export const calculateWorkedHours = (entrada?: string, salida?: string): number => {
+  if (!entrada || !salida) return 0;
+  const [h1, m1] = entrada.split(':').map(Number);
+  const [h2, m2] = salida.split(':').map(Number);
+  const date1 = new Date(0, 0, 0, h1, m1);
+  const date2 = new Date(0, 0, 0, h2, m2);
+  let diff = (date2.getTime() - date1.getTime()) / 1000 / 60 / 60; // Horas
+  return diff > 0 ? diff : 0;
+};
+
+export const isWeekend = (dateString: string): boolean => {
+  const date = new Date(dateString);
+  const day = date.getDay(); // 0 = Domingo, 6 = Sábado
+  return day === 0 || day === 6; // Ajustar zona horaria si es necesario, asumimos string YYYY-MM-DD local
+};
