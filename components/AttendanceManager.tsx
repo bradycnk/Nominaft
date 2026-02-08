@@ -8,7 +8,7 @@ const AttendanceManager: React.FC = () => {
   const [employees, setEmployees] = useState<Empleado[]>([]);
   const [attendances, setAttendances] = useState<Record<string, Asistencia>>({});
   const [loading, setLoading] = useState(true);
-  const [savingId, setSavingId] = useState<string | null>(null);
+  const [processingId, setProcessingId] = useState<string | null>(null);
   
   // Estados para Calendario / Histórico
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
@@ -31,7 +31,7 @@ const AttendanceManager: React.FC = () => {
   const fetchInitialData = async () => {
     setLoading(true);
     try {
-      await supabase.rpc('marcar_inasistencias_del_dia');
+      // Nota: Eliminamos la llamada a 'marcar_inasistencias_del_dia' para quitar el cierre automático.
 
       const { data: empData } = await supabase
         .from('empleados')
@@ -62,7 +62,6 @@ const AttendanceManager: React.FC = () => {
   };
 
   const fetchEmployeeHistory = async () => {
-    // Calcular rango del mes seleccionado
     const startDate = new Date(selectedYear, selectedMonth, 1).toISOString().split('T')[0];
     const endDate = new Date(selectedYear, selectedMonth + 1, 0).toISOString().split('T')[0];
 
@@ -76,6 +75,7 @@ const AttendanceManager: React.FC = () => {
     setEmployeeHistory(data || []);
   };
 
+  // Manejo de cambios en los inputs temporales (antes de guardar)
   const handleTimeChange = (empId: string, field: 'hora_entrada' | 'hora_salida', value: string) => {
     setAttendances(prev => ({
       ...prev,
@@ -90,41 +90,58 @@ const AttendanceManager: React.FC = () => {
     }));
   };
 
-  const verifyAttendance = async (empId: string) => {
-    setSavingId(empId);
+  const saveEntry = async (empId: string) => {
     const data = attendances[empId];
-    
-    if (!data?.hora_entrada) {
-      alert("Debe registrar al menos la hora de entrada.");
-      setSavingId(null);
-      return;
-    }
+    if (!data?.hora_entrada) return alert("Ingrese la hora de entrada");
 
+    setProcessingId(empId);
     try {
       const payload = {
         empleado_id: empId,
         fecha: today,
         hora_entrada: data.hora_entrada,
-        hora_salida: data.hora_salida || null,
         estado: 'presente' as const
       };
 
+      // Upsert para crear el registro si no existe
       const { error } = await supabase
         .from('asistencias')
         .upsert(payload, { onConflict: 'empleado_id,fecha' });
 
       if (error) throw error;
-      fetchInitialData();
+      await fetchInitialData(); // Recargar para confirmar estado guardado
     } catch (err: any) {
-      alert("Error al verificar: " + err.message);
+      alert("Error al guardar entrada: " + err.message);
     } finally {
-      setSavingId(null);
+      setProcessingId(null);
     }
   };
 
-  const isPast4PM = () => {
-    const now = new Date();
-    return now.getHours() >= 16;
+  const saveExit = async (empId: string) => {
+    const data = attendances[empId];
+    if (!data?.hora_entrada) return alert("Error: No hay hora de entrada registrada.");
+    if (!data?.hora_salida) return alert("Ingrese la hora de salida");
+
+    // Validación LOTTT: Salida > Entrada
+    if (data.hora_salida <= data.hora_entrada) {
+      return alert("La hora de salida debe ser posterior a la entrada.");
+    }
+
+    setProcessingId(empId);
+    try {
+      const { error } = await supabase
+        .from('asistencias')
+        .update({ hora_salida: data.hora_salida })
+        .eq('empleado_id', empId)
+        .eq('fecha', today);
+
+      if (error) throw error;
+      await fetchInitialData();
+    } catch (err: any) {
+      alert("Error al guardar salida: " + err.message);
+    } finally {
+      setProcessingId(null);
+    }
   };
 
   // --- Funciones para Calendario LOTTT ---
@@ -286,11 +303,6 @@ const AttendanceManager: React.FC = () => {
              <div className="text-sm font-bold text-slate-600">
                Fecha de Hoy: <span className="text-emerald-600 capitalize">{new Date().toLocaleDateString('es-VE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
              </div>
-             {isPast4PM() && (
-              <div className="bg-rose-100 text-rose-700 px-4 py-2 rounded-lg text-[10px] font-black animate-pulse uppercase tracking-wide">
-                ⚠️ Cierre Automático (4:00 PM)
-              </div>
-            )}
           </div>
           
           <div className="overflow-x-auto">
@@ -301,19 +313,20 @@ const AttendanceManager: React.FC = () => {
                   <th className="px-8 py-5">Entrada</th>
                   <th className="px-8 py-5">Salida</th>
                   <th className="px-8 py-5">Estatus</th>
-                  <th className="px-8 py-5 text-center">Acción</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {loading ? (
-                  <tr><td colSpan={5} className="p-10 text-center text-slate-400 font-bold uppercase text-xs tracking-widest">Sincronizando reloj biométrico...</td></tr>
+                  <tr><td colSpan={4} className="p-10 text-center text-slate-400 font-bold uppercase text-xs tracking-widest">Sincronizando reloj biométrico...</td></tr>
                 ) : employees.map(emp => {
                   const att = attendances[emp.id];
-                  const isMissing = !att && isPast4PM();
-                  const isVerified = att?.id !== undefined;
+                  // Si att.id existe, significa que ya se guardó la entrada en DB.
+                  const entrySaved = !!att?.id; 
+                  // Si hora_salida existe en DB.
+                  const exitSaved = !!att?.hora_salida;
 
                   return (
-                    <tr key={emp.id} className={`hover:bg-slate-50/50 transition-colors ${isMissing ? 'bg-rose-50/30' : ''}`}>
+                    <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-8 py-5">
                         <div className="flex items-center gap-4">
                           <div className="w-10 h-10 rounded-full bg-slate-200 overflow-hidden border-2 border-white shadow-sm">
@@ -325,47 +338,65 @@ const AttendanceManager: React.FC = () => {
                           </div>
                         </div>
                       </td>
+                      
+                      {/* COLUMNA ENTRADA */}
                       <td className="px-8 py-5">
-                        <input 
-                          type="time" 
-                          value={att?.hora_entrada || ''} 
-                          onChange={(e) => handleTimeChange(emp.id, 'hora_entrada', e.target.value)}
-                          disabled={isMissing || att?.estado === 'falta'}
-                          className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-mono font-bold text-slate-600 focus:ring-2 focus:ring-emerald-500 outline-none disabled:opacity-50 disabled:bg-slate-100"
-                        />
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="time" 
+                            value={att?.hora_entrada || ''} 
+                            onChange={(e) => handleTimeChange(emp.id, 'hora_entrada', e.target.value)}
+                            disabled={entrySaved} 
+                            className={`px-4 py-2 rounded-xl border text-xs font-mono font-bold outline-none transition-all w-32 ${entrySaved ? 'bg-slate-50 text-slate-500 border-slate-100' : 'bg-white border-emerald-200 text-emerald-800 focus:ring-2 focus:ring-emerald-500'}`}
+                          />
+                          {!entrySaved ? (
+                             <button 
+                               onClick={() => saveEntry(emp.id)}
+                               disabled={processingId === emp.id || !att?.hora_entrada}
+                               className="bg-emerald-600 text-white px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-emerald-700 transition-all shadow-md shadow-emerald-100 disabled:opacity-50 disabled:shadow-none"
+                             >
+                               {processingId === emp.id ? '...' : 'Confirmar'}
+                             </button>
+                          ) : (
+                             <span className="text-emerald-500 text-lg">✓</span>
+                          )}
+                        </div>
                       </td>
+
+                      {/* COLUMNA SALIDA */}
                       <td className="px-8 py-5">
-                        <input 
-                          type="time" 
-                          value={att?.hora_salida || ''} 
-                          onChange={(e) => handleTimeChange(emp.id, 'hora_salida', e.target.value)}
-                          disabled={isMissing || att?.estado === 'falta'}
-                          className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-mono font-bold text-slate-600 focus:ring-2 focus:ring-emerald-500 outline-none disabled:opacity-50 disabled:bg-slate-100"
-                        />
+                         <div className="flex items-center gap-2">
+                           <input 
+                             type="time" 
+                             value={att?.hora_salida || ''} 
+                             onChange={(e) => handleTimeChange(emp.id, 'hora_salida', e.target.value)}
+                             disabled={!entrySaved || exitSaved}
+                             className={`px-4 py-2 rounded-xl border text-xs font-mono font-bold outline-none transition-all w-32 ${exitSaved ? 'bg-slate-50 text-slate-500 border-slate-100' : !entrySaved ? 'bg-slate-100 text-slate-300 border-slate-100 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 focus:ring-2 focus:ring-emerald-500'}`}
+                           />
+                           {entrySaved && !exitSaved && (
+                              <button 
+                                onClick={() => saveExit(emp.id)}
+                                disabled={processingId === emp.id || !att?.hora_salida}
+                                className="bg-slate-800 text-white px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-black transition-all shadow-md disabled:opacity-50 disabled:shadow-none"
+                              >
+                                {processingId === emp.id ? '...' : 'Salida'}
+                              </button>
+                           )}
+                           {exitSaved && <span className="text-slate-400 text-lg">✓</span>}
+                         </div>
                       </td>
+
+                      {/* COLUMNA ESTATUS */}
                       <td className="px-8 py-5">
-                        {isMissing || att?.estado === 'falta' ? (
-                          <span className="px-3 py-1.5 bg-rose-100 text-rose-600 rounded-lg text-[9px] font-black uppercase tracking-wider">Inasistencia</span>
-                        ) : isVerified ? (
-                          <span className="px-3 py-1.5 bg-emerald-100 text-emerald-600 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 w-fit">
-                            <span>✓</span> Presente
+                        {exitSaved ? (
+                          <span className="px-3 py-1.5 bg-slate-100 text-slate-500 rounded-lg text-[9px] font-black uppercase tracking-wider">Jornada Completada</span>
+                        ) : entrySaved ? (
+                          <span className="px-3 py-1.5 bg-emerald-100 text-emerald-600 rounded-lg text-[9px] font-black uppercase tracking-wider animate-pulse">
+                            Laborando
                           </span>
                         ) : (
-                          <span className="px-3 py-1.5 bg-slate-100 text-slate-400 rounded-lg text-[9px] font-black uppercase tracking-wider">Pendiente</span>
+                          <span className="px-3 py-1.5 bg-slate-50 text-slate-300 rounded-lg text-[9px] font-black uppercase tracking-wider">Pendiente</span>
                         )}
-                      </td>
-                      <td className="px-8 py-5 text-center">
-                        <button 
-                          onClick={() => verifyAttendance(emp.id)}
-                          disabled={savingId === emp.id || isMissing || att?.estado === 'falta'}
-                          className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                            isVerified 
-                            ? 'bg-slate-100 text-slate-400 cursor-default' 
-                            : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg shadow-emerald-100 active:scale-95'
-                          }`}
-                        >
-                          {savingId === emp.id ? '...' : isVerified ? 'Actualizar' : 'Fichar'}
-                        </button>
                       </td>
                     </tr>
                   );
