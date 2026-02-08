@@ -6,7 +6,12 @@ import { Empleado, Asistencia } from '../types.ts';
 const AttendanceManager: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'daily' | 'calendar'>('daily');
   const [employees, setEmployees] = useState<Empleado[]>([]);
+  
+  // Estado para el formulario (Inputs)
   const [attendances, setAttendances] = useState<Record<string, Asistencia>>({});
+  // Estado para la base de datos (Confirmación real)
+  const [savedAttendances, setSavedAttendances] = useState<Record<string, Asistencia>>({});
+  
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   
@@ -31,8 +36,6 @@ const AttendanceManager: React.FC = () => {
   const fetchInitialData = async () => {
     setLoading(true);
     try {
-      // Nota: Eliminamos la llamada a 'marcar_inasistencias_del_dia' para quitar el cierre automático.
-
       const { data: empData } = await supabase
         .from('empleados')
         .select('*')
@@ -53,7 +56,15 @@ const AttendanceManager: React.FC = () => {
       attData?.forEach(a => {
         attMap[a.empleado_id] = a;
       });
-      setAttendances(attMap);
+      
+      // Actualizamos tanto el formulario como el estado guardado
+      setAttendances(prev => {
+        // Mantenemos lo que el usuario esté escribiendo si no hay datos nuevos, 
+        // pero idealmente al recargar pisamos con la DB.
+        return { ...attMap };
+      });
+      setSavedAttendances(JSON.parse(JSON.stringify(attMap))); // Copia profunda para el estado guardado
+
     } catch (err) {
       console.error("Error cargando asistencia:", err);
     } finally {
@@ -103,7 +114,6 @@ const AttendanceManager: React.FC = () => {
         estado: 'presente' as const
       };
 
-      // Upsert para crear el registro si no existe
       const { error } = await supabase
         .from('asistencias')
         .upsert(payload, { onConflict: 'empleado_id,fecha' });
@@ -119,11 +129,14 @@ const AttendanceManager: React.FC = () => {
 
   const saveExit = async (empId: string) => {
     const data = attendances[empId];
-    if (!data?.hora_entrada) return alert("Error: No hay hora de entrada registrada.");
+    // Usamos savedAttendances para validar contra la DB
+    const savedData = savedAttendances[empId];
+
+    if (!savedData?.hora_entrada) return alert("Error: No hay hora de entrada registrada en el sistema.");
     if (!data?.hora_salida) return alert("Ingrese la hora de salida");
 
     // Validación LOTTT: Salida > Entrada
-    if (data.hora_salida <= data.hora_entrada) {
+    if (data.hora_salida <= savedData.hora_entrada) {
       return alert("La hora de salida debe ser posterior a la entrada.");
     }
 
@@ -319,11 +332,12 @@ const AttendanceManager: React.FC = () => {
                 {loading ? (
                   <tr><td colSpan={4} className="p-10 text-center text-slate-400 font-bold uppercase text-xs tracking-widest">Sincronizando reloj biométrico...</td></tr>
                 ) : employees.map(emp => {
-                  const att = attendances[emp.id];
-                  // Si att.id existe, significa que ya se guardó la entrada en DB.
-                  const entrySaved = !!att?.id; 
-                  // Si hora_salida existe en DB.
-                  const exitSaved = !!att?.hora_salida;
+                  const att = attendances[emp.id]; // Estado del Formulario (Inputs)
+                  const savedAtt = savedAttendances[emp.id]; // Estado de la Base de Datos
+
+                  // Verificamos si YA está guardado en base de datos para bloquear/mostrar checks
+                  const entrySaved = !!savedAtt?.id; 
+                  const exitSaved = !!savedAtt?.hora_salida;
 
                   return (
                     <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
@@ -373,13 +387,14 @@ const AttendanceManager: React.FC = () => {
                              disabled={!entrySaved || exitSaved}
                              className={`px-4 py-2 rounded-xl border text-xs font-mono font-bold outline-none transition-all w-32 ${exitSaved ? 'bg-slate-50 text-slate-500 border-slate-100' : !entrySaved ? 'bg-slate-100 text-slate-300 border-slate-100 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 focus:ring-2 focus:ring-emerald-500'}`}
                            />
+                           {/* Mostrar botón si la entrada está guardada PERO la salida aún NO está guardada en DB */}
                            {entrySaved && !exitSaved && (
                               <button 
                                 onClick={() => saveExit(emp.id)}
                                 disabled={processingId === emp.id || !att?.hora_salida}
-                                className="bg-slate-800 text-white px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-black transition-all shadow-md disabled:opacity-50 disabled:shadow-none"
+                                className="bg-emerald-600 text-white px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-emerald-700 transition-all shadow-md shadow-emerald-100 disabled:opacity-50 disabled:shadow-none"
                               >
-                                {processingId === emp.id ? '...' : 'Salida'}
+                                {processingId === emp.id ? '...' : 'Confirmar'}
                               </button>
                            )}
                            {exitSaved && <span className="text-slate-400 text-lg">✓</span>}
