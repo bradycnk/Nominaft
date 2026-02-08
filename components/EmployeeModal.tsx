@@ -146,7 +146,14 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
         if (newCv) finalCvUrl = await handleFileUpload(newCv, 'cv');
       }
 
-      const payload = { ...formData, foto_url: finalFotoUrl, cv_url: finalCvUrl };
+      // Fix: Convert empty string sucursal_id to null to avoid UUID syntax error
+      const payload = { 
+        ...formData, 
+        foto_url: finalFotoUrl, 
+        cv_url: finalCvUrl,
+        sucursal_id: formData.sucursal_id || null 
+      };
+      
       let empId = employeeToEdit?.id;
 
       if (employeeToEdit) {
@@ -181,7 +188,6 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
     setFamily(newFamily);
   };
 
-  // Change: Updated input classes to use light background and dark text for better visibility
   const inputClasses = "w-full px-5 py-4 rounded-xl border border-slate-200 bg-white text-slate-800 font-medium outline-none transition-all focus:ring-2 focus:ring-emerald-500/50 placeholder:text-slate-400";
   const labelClasses = "text-[10px] font-black text-emerald-500 uppercase mb-2 block tracking-wider";
 
@@ -299,6 +305,28 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
                  <div>
                     <label className={labelClasses}>Departamento / Área</label>
                     <input className={inputClasses} value={formData.departamento} onChange={e => setFormData({...formData, departamento: e.target.value})} placeholder="Ej: Farmacia, Almacén, Administración..." />
+                 </div>
+               </div>
+               
+               {/* Selector de Sucursal */}
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                 <div>
+                    <label className={labelClasses}>Sucursal / Sede</label>
+                    <select 
+                      className={`${inputClasses} appearance-none cursor-pointer`}
+                      value={formData.sucursal_id} 
+                      onChange={e => setFormData({...formData, sucursal_id: e.target.value})}
+                    >
+                      <option value="">-- Sin Asignar --</option>
+                      {branches.map(b => (
+                        <option key={b.id} value={b.id}>{b.nombre_id}</option>
+                      ))}
+                    </select>
+                 </div>
+                 <div className="flex items-end pb-2">
+                   <div className={`text-xs font-medium px-4 py-2 rounded-lg ${formData.sucursal_id ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                     {formData.sucursal_id ? '✓ Sede Asignada' : '⚠️ Empleado sin sede asignada'}
+                   </div>
                  </div>
                </div>
 
