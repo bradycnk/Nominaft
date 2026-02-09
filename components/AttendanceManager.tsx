@@ -102,6 +102,9 @@ const AttendanceManager: React.FC = () => {
   };
 
   const saveEntry = async (empId: string) => {
+    const savedData = savedAttendances[empId];
+    if (savedData?.cerrado) return alert("El día ya está cerrado administrativamente. No se pueden hacer cambios.");
+
     const data = attendances[empId];
     if (!data?.hora_entrada) return alert("Ingrese la hora de entrada");
 
@@ -128,11 +131,13 @@ const AttendanceManager: React.FC = () => {
   };
 
   const saveExit = async (empId: string) => {
-    const data = attendances[empId];
     // Usamos savedAttendances para validar contra la DB
     const savedData = savedAttendances[empId];
 
+    if (savedData?.cerrado) return alert("El día ya está cerrado administrativamente. No se pueden hacer cambios.");
     if (!savedData?.hora_entrada) return alert("Error: No hay hora de entrada registrada en el sistema.");
+    
+    const data = attendances[empId];
     if (!data?.hora_salida) return alert("Ingrese la hora de salida");
 
     // Validación LOTTT: Salida > Entrada
@@ -154,6 +159,42 @@ const AttendanceManager: React.FC = () => {
       alert("Error al guardar salida: " + err.message);
     } finally {
       setProcessingId(null);
+    }
+  };
+
+  const handleCloseQuincena = async (isSecondHalf: boolean) => {
+    const startDay = isSecondHalf ? 16 : 1;
+    const endDay = isSecondHalf ? new Date(selectedYear, selectedMonth + 1, 0).getDate() : 15;
+    
+    const startDate = new Date(selectedYear, selectedMonth, startDay).toISOString().split('T')[0];
+    const endDate = new Date(selectedYear, selectedMonth, endDay).toISOString().split('T')[0];
+
+    // Validación: No cerrar fechas futuras
+    const now = new Date();
+    const rangeEnd = new Date(selectedYear, selectedMonth, endDay);
+    if (rangeEnd > now && !confirm("¡Atención! Está intentando cerrar una quincena que aún no ha terminado. ¿Desea continuar?")) {
+      return;
+    }
+
+    if (!confirm(`¿Confirma el CIERRE DE QUINCENA para el empleado seleccionado?\n\nPeríodo: ${startDate} al ${endDate}\n\nEsta acción bloqueará la edición de estos registros.`)) return;
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('asistencias')
+        .update({ cerrado: true })
+        .eq('empleado_id', selectedEmployeeId)
+        .gte('fecha', startDate)
+        .lte('fecha', endDate);
+
+      if (error) throw error;
+
+      alert("Quincena cerrada correctamente. Registros bloqueados.");
+      fetchEmployeeHistory();
+    } catch (err: any) {
+      alert("Error al cerrar quincena: " + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -191,6 +232,7 @@ const AttendanceManager: React.FC = () => {
     let totalHours = 0;
     let daysWorked = 0;
     let inasistencias = 0;
+    let isClosed = false;
 
     relevantHistory.forEach(h => {
       if (h.estado === 'presente') {
@@ -199,9 +241,10 @@ const AttendanceManager: React.FC = () => {
       } else if (h.estado === 'falta') {
         inasistencias++;
       }
+      if (h.cerrado) isClosed = true;
     });
 
-    return { totalHours, daysWorked, inasistencias };
+    return { totalHours, daysWorked, inasistencias, isClosed };
   };
 
   const renderCalendar = () => {
@@ -242,22 +285,32 @@ const AttendanceManager: React.FC = () => {
             bgColor = 'bg-slate-50';
           }
 
+          if (record?.cerrado) {
+            borderColor = 'border-slate-400';
+            // bgColor = 'bg-slate-100'; // Opcional: Oscurecer cerrados
+          }
+
           return (
-            <div key={dateStr} className={`h-24 border rounded-xl p-2 flex flex-col justify-between transition-all hover:scale-105 ${bgColor} ${borderColor}`}>
+            <div key={dateStr} className={`h-24 border rounded-xl p-2 flex flex-col justify-between transition-all hover:scale-105 ${bgColor} ${borderColor} ${record?.cerrado ? 'opacity-80' : ''}`}>
               <div className="flex justify-between items-start">
                 <span className={`text-xs font-bold ${isWeekend ? 'text-slate-400' : 'text-slate-700'}`}>
                   {date.getDate()}
                 </span>
-                {record?.estado === 'presente' && (
-                  <span className="text-[9px] font-black text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">
-                    ASISTIO
-                  </span>
-                )}
-                {record?.estado === 'falta' && (
-                   <span className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded">
-                    FALTA
-                  </span>
-                )}
+                <div className="flex gap-1">
+                  {record?.cerrado && (
+                    <span className="text-[9px]" title="Cerrado/Pagado">🔒</span>
+                  )}
+                  {record?.estado === 'presente' && (
+                    <span className="text-[9px] font-black text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">
+                      ASISTIO
+                    </span>
+                  )}
+                  {record?.estado === 'falta' && (
+                     <span className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded">
+                      FALTA
+                    </span>
+                  )}
+                </div>
               </div>
               
               <div className="text-center">
@@ -338,6 +391,7 @@ const AttendanceManager: React.FC = () => {
                   // Verificamos si YA está guardado en base de datos para bloquear/mostrar checks
                   const entrySaved = !!savedAtt?.id; 
                   const exitSaved = !!savedAtt?.hora_salida;
+                  const isClosed = savedAtt?.cerrado;
 
                   return (
                     <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
@@ -360,10 +414,10 @@ const AttendanceManager: React.FC = () => {
                             type="time" 
                             value={att?.hora_entrada || ''} 
                             onChange={(e) => handleTimeChange(emp.id, 'hora_entrada', e.target.value)}
-                            disabled={entrySaved} 
-                            className={`px-4 py-2 rounded-xl border text-xs font-mono font-bold outline-none transition-all w-32 ${entrySaved ? 'bg-slate-50 text-slate-500 border-slate-100' : 'bg-white border-emerald-200 text-emerald-800 focus:ring-2 focus:ring-emerald-500'}`}
+                            disabled={entrySaved || isClosed} 
+                            className={`px-4 py-2 rounded-xl border text-xs font-mono font-bold outline-none transition-all w-32 ${entrySaved || isClosed ? 'bg-slate-50 text-slate-500 border-slate-100' : 'bg-white border-emerald-200 text-emerald-800 focus:ring-2 focus:ring-emerald-500'}`}
                           />
-                          {!entrySaved ? (
+                          {!entrySaved && !isClosed ? (
                              <button 
                                onClick={() => saveEntry(emp.id)}
                                disabled={processingId === emp.id || !att?.hora_entrada}
@@ -372,7 +426,9 @@ const AttendanceManager: React.FC = () => {
                                {processingId === emp.id ? '...' : 'Confirmar'}
                              </button>
                           ) : (
-                             <span className="text-emerald-500 text-lg">✓</span>
+                             <span className={`${isClosed ? 'text-slate-400' : 'text-emerald-500'} text-lg`}>
+                               {isClosed ? '🔒' : '✓'}
+                             </span>
                           )}
                         </div>
                       </td>
@@ -384,11 +440,11 @@ const AttendanceManager: React.FC = () => {
                              type="time" 
                              value={att?.hora_salida || ''} 
                              onChange={(e) => handleTimeChange(emp.id, 'hora_salida', e.target.value)}
-                             disabled={!entrySaved || exitSaved}
-                             className={`px-4 py-2 rounded-xl border text-xs font-mono font-bold outline-none transition-all w-32 ${exitSaved ? 'bg-slate-50 text-slate-500 border-slate-100' : !entrySaved ? 'bg-slate-100 text-slate-300 border-slate-100 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 focus:ring-2 focus:ring-emerald-500'}`}
+                             disabled={!entrySaved || exitSaved || isClosed}
+                             className={`px-4 py-2 rounded-xl border text-xs font-mono font-bold outline-none transition-all w-32 ${exitSaved || isClosed ? 'bg-slate-50 text-slate-500 border-slate-100' : !entrySaved ? 'bg-slate-100 text-slate-300 border-slate-100 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 focus:ring-2 focus:ring-emerald-500'}`}
                            />
                            {/* Mostrar botón si la entrada está guardada PERO la salida aún NO está guardada en DB */}
-                           {entrySaved && !exitSaved && (
+                           {entrySaved && !exitSaved && !isClosed && (
                               <button 
                                 onClick={() => saveExit(emp.id)}
                                 disabled={processingId === emp.id || !att?.hora_salida}
@@ -397,13 +453,19 @@ const AttendanceManager: React.FC = () => {
                                 {processingId === emp.id ? '...' : 'Confirmar'}
                               </button>
                            )}
-                           {exitSaved && <span className="text-slate-400 text-lg">✓</span>}
+                           {(exitSaved || isClosed) && <span className={`${isClosed ? 'text-slate-400' : 'text-slate-400'} text-lg`}>
+                              {isClosed && !exitSaved ? '🔒' : '✓'}
+                            </span>}
                          </div>
                       </td>
 
                       {/* COLUMNA ESTATUS */}
                       <td className="px-8 py-5">
-                        {exitSaved ? (
+                        {isClosed ? (
+                           <span className="px-3 py-1.5 bg-slate-100 text-slate-400 rounded-lg text-[9px] font-black uppercase tracking-wider border border-slate-200">
+                            Cerrado/Pagado
+                          </span>
+                        ) : exitSaved ? (
                           <span className="px-3 py-1.5 bg-slate-100 text-slate-500 rounded-lg text-[9px] font-black uppercase tracking-wider">Jornada Completada</span>
                         ) : entrySaved ? (
                           <span className="px-3 py-1.5 bg-emerald-100 text-emerald-600 rounded-lg text-[9px] font-black uppercase tracking-wider animate-pulse">
@@ -471,9 +533,10 @@ const AttendanceManager: React.FC = () => {
                  const title = isSecondHalf ? 'Segunda Quincena (16 - Fin)' : 'Primera Quincena (01 - 15)';
                  
                  return (
-                    <div key={title} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                    <div key={title} className={`border rounded-2xl p-6 shadow-sm transition-all ${stats.isClosed ? 'bg-slate-50 border-slate-200 opacity-80' : 'bg-white border-slate-200'}`}>
                        <h3 className="text-sm font-black text-slate-800 uppercase tracking-wide mb-4 flex items-center gap-2">
                          <span>🗓️</span> {title}
+                         {stats.isClosed && <span className="ml-auto text-[10px] bg-slate-200 text-slate-500 px-2 py-1 rounded">CERRADO</span>}
                        </h3>
                        <div className="space-y-3">
                           <div className="flex justify-between items-center p-3 bg-slate-50 rounded-xl">
@@ -489,8 +552,16 @@ const AttendanceManager: React.FC = () => {
                              <span className="text-sm font-black text-rose-800">{stats.inasistencias}</span>
                           </div>
                        </div>
-                       <button className="w-full mt-4 bg-[#1E1E2D] text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-black transition-all">
-                          Cerrar Quincena
+                       <button 
+                         onClick={() => handleCloseQuincena(isSecondHalf)}
+                         disabled={stats.isClosed}
+                         className={`w-full mt-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all ${
+                            stats.isClosed 
+                            ? 'bg-slate-200 text-slate-400 cursor-not-allowed' 
+                            : 'bg-[#1E1E2D] text-white hover:bg-black'
+                         }`}
+                       >
+                          {stats.isClosed ? 'Quincena Cerrada' : 'Cerrar Quincena'}
                        </button>
                     </div>
                  );

@@ -94,4 +94,5 @@ export interface Asistencia {
   hora_entrada?: string;
   hora_salida?: string;
   observaciones?: string;
+  cerrado?: boolean;
 }
