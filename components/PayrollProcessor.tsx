@@ -13,32 +13,43 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
   const [attendances, setAttendances] = useState<Asistencia[]>([]);
   const [isUpdatingRate, setIsUpdatingRate] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
+  
+  // Estado para selección de Quincena
+  const [periodo, setPeriodo] = useState<'Q1' | 'Q2'>('Q1');
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
   useEffect(() => {
-    const loadData = async () => {
-      setLoadingData(true);
-      // Cargar Empleados
-      const { data: empData } = await supabase
-        .from('empleados')
-        .select('*, sucursales(id, nombre_id, rif, direccion, es_principal)')
-        .eq('activo', true);
-      
-      // Cargar Asistencias del Mes Actual
-      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
-      const endOfMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString();
-      
-      const { data: attData } = await supabase
-        .from('asistencias')
-        .select('*')
-        .gte('fecha', startOfMonth)
-        .lte('fecha', endOfMonth);
-
-      setEmployees(empData || []);
-      setAttendances(attData || []);
-      setLoadingData(false);
-    };
     loadData();
-  }, []);
+  }, [periodo, selectedMonth, selectedYear]);
+
+  const loadData = async () => {
+    setLoadingData(true);
+    
+    // Calcular fechas inicio y fin según quincena
+    const startDay = periodo === 'Q1' ? 1 : 16;
+    const endDay = periodo === 'Q1' ? 15 : new Date(selectedYear, selectedMonth + 1, 0).getDate();
+    
+    const startDate = new Date(selectedYear, selectedMonth, startDay).toISOString().split('T')[0];
+    const endDate = new Date(selectedYear, selectedMonth, endDay).toISOString().split('T')[0];
+
+    // Cargar Empleados
+    const { data: empData } = await supabase
+      .from('empleados')
+      .select('*, sucursales(id, nombre_id, rif, direccion, es_principal)')
+      .eq('activo', true);
+    
+    // Cargar Asistencias del rango seleccionado
+    const { data: attData } = await supabase
+      .from('asistencias')
+      .select('*')
+      .gte('fecha', startDate)
+      .lte('fecha', endDate);
+
+    setEmployees(empData || []);
+    setAttendances(attData || []);
+    setLoadingData(false);
+  };
 
   const handleUpdateBcv = async () => {
     setIsUpdatingRate(true);
@@ -64,20 +75,24 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
   const generatePDF = async (emp: Empleado, calc: any) => {
     if (!config) return;
 
-    // 1. Procesar Asistencia para el Recibo
+    // Fechas para el recibo
+    const startDay = periodo === 'Q1' ? 1 : 16;
+    const endDay = periodo === 'Q1' ? 15 : new Date(selectedYear, selectedMonth + 1, 0).getDate();
+    const fechaDesde = `${startDay.toString().padStart(2, '0')}/${(selectedMonth + 1).toString().padStart(2, '0')}/${selectedYear}`;
+    const fechaHasta = `${endDay.toString().padStart(2, '0')}/${(selectedMonth + 1).toString().padStart(2, '0')}/${selectedYear}`;
+
+    // Lógica de horas trabajadas (si hay asistencia)
     const empAsistencias = attendances.filter(a => a.empleado_id === emp.id && a.estado === 'presente');
-    
     let totalHorasRegulares = 0;
-    let totalHorasExtras = 0; // Simulamos > 8 horas
-    let diasDescansoTrabajados = 0; // Sábados y Domingos
+    let totalHorasExtras = 0;
+    let diasDescansoTrabajados = 0;
 
     empAsistencias.forEach(att => {
         const horasDia = calculateWorkedHours(att.hora_entrada, att.hora_salida);
         const esFinDeSemana = isWeekend(att.fecha);
-
         if (esFinDeSemana) {
-            diasDescansoTrabajados += 1; // Cuenta como día trabajado en descanso
-            totalHorasRegulares += horasDia; // Sumamos al total de horas también
+            diasDescansoTrabajados += 1;
+            totalHorasRegulares += horasDia;
         } else {
             if (horasDia > 8) {
                 totalHorasRegulares += 8;
@@ -88,253 +103,269 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
         }
     });
 
-    // Cálculos Monetarios basados en Asistencia Real (Aprox para el recibo)
-    const salarioDiarioBs = emp.salario_base_vef / 30;
-    const salarioHoraBs = salarioDiarioBs / 8;
-    
+    const salarioHoraBs = calc.salario_diario_normal / 8;
     const montoHorasRegulares = totalHorasRegulares * salarioHoraBs;
-    const montoHorasExtras = totalHorasExtras * (salarioHoraBs * 1.5); // 50% Recargo LOTTT
-    const montoDiasDescanso = diasDescansoTrabajados * (salarioDiarioBs * 1.5); // 50% Recargo día descanso trabajado
+    const montoHorasExtras = totalHorasExtras * (salarioHoraBs * 1.5);
+    const montoDiasDescanso = diasDescansoTrabajados * (calc.salario_diario_normal * 1.5);
 
-    // Ajuste: Si no hay asistencia registrada, usamos el cálculo base mensual (calc) por defecto
-    // para no generar recibos en cero si no se ha usado el modulo de asistencia aun.
     const usaCalculoAsistencia = empAsistencias.length > 0;
     
-    const baseAsignaciones = usaCalculoAsistencia ? (montoHorasRegulares + montoHorasExtras + montoDiasDescanso) : calc.sueldo_base_vef;
+    // Si hay asistencia, usamos los cálculos reales, si no, usamos el estándar de la quincena (15 días)
+    const baseAsignaciones = usaCalculoAsistencia 
+        ? (montoHorasRegulares + montoHorasExtras + montoDiasDescanso) 
+        : calc.sueldo_periodo;
+    
+    const diasPagados = usaCalculoAsistencia ? empAsistencias.length : (periodo === 'Q1' ? 15 : (endDay - 15));
 
-    // Recálculo de deducciones basado en el total devengado real
-    const ivssReal = baseAsignaciones * 0.04;
-    const faovReal = baseAsignaciones * 0.01;
-    const spfReal = baseAsignaciones * 0.005;
-    const totalDeduccionesReal = ivssReal + faovReal + spfReal;
-    const netoPagarReal = baseAsignaciones + calc.bono_alimentacion_vef - totalDeduccionesReal;
-
-
-    // 2. Generación del PDF
+    // Generación PDF
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.width;
     
-    // --- Header con Logo ---
+    // --- Header ---
     try {
         const imgProps = doc.getImageProperties(LOGO_URL);
-        const imgWidth = 30;
+        const imgWidth = 25;
         const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
-        // Logo en su posición original (parte superior izquierda)
         doc.addImage(LOGO_URL, 'JPEG', 15, 10, imgWidth, imgHeight);
-    } catch (e) {
-        console.warn("No se pudo cargar el logo", e);
-    }
+    } catch (e) { console.warn("Logo error", e); }
 
-    // Datos Empresa
     doc.setFont("courier", "bold");
     doc.setFontSize(14);
-    // Título centrado arriba
     doc.text("RECIBO DE PAGO DE NÓMINA", pageWidth / 2, 20, { align: "center" });
     
-    doc.setFontSize(10);
+    doc.setFontSize(9);
     doc.setFont("courier", "normal");
     
-    // Desplazamos todo el bloque de texto hacia abajo (Y += 20) para que empiece DEBAJO del logo
-    doc.text("==========================================================================", 15, 50);
-    
-    doc.text(`EMPRESA: ${emp.sucursales?.nombre_id || 'FarmaNomina C.A.'}`, 15, 55);
-    doc.text(`RIF: ${emp.sucursales?.rif || 'J-12345678-9'}`, 140, 55);
-    
-    // Truncar dirección para evitar desbordamiento
+    let y = 35;
+    doc.text(`EMPRESA: ${emp.sucursales?.nombre_id || 'FarmaNomina C.A.'}`, 15, y);
+    doc.text(`RIF: ${emp.sucursales?.rif || 'J-12345678-9'}`, 140, y);
+    y += 5;
     const direccion = emp.sucursales?.direccion || 'Sede Principal';
-    const direccionTruncada = direccion.length > 60 ? direccion.substring(0, 60) + '...' : direccion;
-    doc.text(`DIRECCIÓN: ${direccionTruncada}`, 15, 60);
+    doc.text(`DIR: ${direccion.substring(0, 80)}`, 15, y);
     
-    doc.text("==========================================================================", 15, 65);
+    y += 8;
+    doc.text("==========================================================================", 15, y);
+    y += 5;
 
-    // Datos del Trabajador
-    doc.text("DATOS DEL TRABAJADOR", 15, 70);
-    doc.text(`Nombre: ${emp.nombre} ${emp.apellido}`, 15, 75);
-    doc.text(`Cargo: ${emp.cargo || 'General'}`, 15, 80);
-    
-    const today = new Date();
-    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('es-VE');
-    const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).toLocaleDateString('es-VE');
-    
-    doc.text(`Período de Pago: Mensual`, 15, 85);
-    doc.text(`Salario Base Diario: Bs. ${salarioDiarioBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 15, 90);
-
-    // Columna Derecha de Datos Trabajador
-    doc.text(`C.I.: ${emp.cedula}`, 115, 75);
-    doc.text(`Fecha Ingreso: ${emp.fecha_ingreso}`, 115, 80);
-    doc.text(`Desde: ${firstDay}  Hasta: ${lastDay}`, 115, 85);
-    doc.text(`Salario Base Hora: Bs. ${salarioHoraBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 115, 90);
-
-    doc.text("--------------------------------------------------------------------------", 15, 95);
-
-    // Tabla de Conceptos
-    // Iniciamos más abajo
-    let y = 102; 
+    // Datos Trabajador
     doc.setFont("courier", "bold");
+    doc.text(`TRABAJADOR: ${emp.nombre} ${emp.apellido}`, 15, y);
+    doc.text(`C.I.: ${emp.cedula}`, 140, y);
+    doc.setFont("courier", "normal");
+    y += 5;
+    doc.text(`Cargo: ${emp.cargo || 'General'}`, 15, y);
+    doc.text(`Ingreso: ${emp.fecha_ingreso}`, 140, y);
+    y += 5;
+    doc.text(`Antigüedad: ${calc.anios_servicio} años`, 15, y);
+    doc.text(`Período: ${fechaDesde} al ${fechaHasta}`, 140, y);
+    y += 5;
     
+    // SALARIO INTEGRAL (Base de cálculo)
+    doc.setFillColor(240, 240, 240);
+    doc.rect(15, y, pageWidth - 30, 15, 'F');
+    y += 4;
+    doc.setFont("courier", "bold");
+    doc.text("INFORMACIÓN SALARIAL (BASE DE CÁLCULO PRESTACIONES)", 20, y);
+    y += 4;
+    doc.setFont("courier", "normal");
+    doc.setFontSize(8);
+    doc.text(`Salario Diario Normal: Bs. ${calc.salario_diario_normal.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 20, y);
+    doc.text(`+ Alícuota Utilidades: Bs. ${calc.alicuota_utilidades_diaria.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 85, y);
+    doc.text(`+ Alícuota Vacaciones: Bs. ${calc.alicuota_vacaciones_diaria.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 145, y);
+    y += 4;
+    doc.setFont("courier", "bold");
+    doc.text(`= SALARIO INTEGRAL DIARIO: Bs. ${calc.salario_diario_integral.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 20, y);
+    y += 6;
+    
+    // Prestaciones Acumuladas
+    doc.setFontSize(8);
+    const acumulado = emp.prestaciones_acumuladas_vef || 0;
+    doc.text(`GARANTÍA PRESTACIONES ACUMULADA: Bs. ${acumulado.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 140, y, {align: 'right'});
+    y += 5;
+
+    doc.setFontSize(9);
+    doc.text("--------------------------------------------------------------------------", 15, y);
+    
+    // Tabla Conceptos
+    y += 5;
+    doc.setFont("courier", "bold");
     doc.text("CONCEPTOS", 15, y);
-    doc.text("CANTIDAD", 125, y, { align: "right" });
-    doc.text("ASIGNACIONES", 160, y, { align: "right" });
+    doc.text("ASIGNACIONES", 155, y, { align: "right" });
     doc.text("DEDUCCIONES", 195, y, { align: "right" });
     doc.setFont("courier", "normal");
-    
     y += 4;
     doc.text("--------------------------------------------------------------------------", 15, y);
     y += 5;
 
-    // Filas de Asignaciones
-    const addRow = (concepto: string, cantidad: string, asignacion: number | null, deduccion: number | null) => {
+    const addRow = (concepto: string, asignacion: number | null, deduccion: number | null) => {
         doc.text(concepto, 15, y);
-        if (cantidad) doc.text(cantidad, 125, y, { align: "right" });
-        if (asignacion !== null) doc.text(`${asignacion.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 160, y, { align: "right" });
-        if (deduccion !== null) doc.text(`${deduccion.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 195, y, { align: "right" });
+        if (asignacion !== null) doc.text(`${asignacion.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 155, y, { align: "right" });
+        if (deduccion !== null) doc.text(`${deduccion.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 195, y, { align: "right" });
         y += 5;
     };
 
     if (usaCalculoAsistencia) {
-        addRow("(+) Salario Básico (L-V)", `${totalHorasRegulares.toFixed(1)} Horas`, montoHorasRegulares, null);
-        if (totalHorasExtras > 0) addRow("(+) Horas Extras Diurnas", `${totalHorasExtras.toFixed(1)} Horas`, montoHorasExtras, null);
-        if (diasDescansoTrabajados > 0) addRow("(+) Días Descanso Trabajados", `${diasDescansoTrabajados} Días`, montoDiasDescanso, null);
+        addRow(`Sueldo Normal (${totalHorasRegulares.toFixed(1)} hrs)`, montoHorasRegulares, null);
+        if (totalHorasExtras > 0) addRow(`Horas Extras (${totalHorasExtras.toFixed(1)} hrs)`, montoHorasExtras, null);
+        if (diasDescansoTrabajados > 0) addRow(`Días Descanso (${diasDescansoTrabajados})`, montoDiasDescanso, null);
     } else {
-        addRow("(+) Salario Básico Mensual", "30 Días", calc.sueldo_base_vef, null);
+        const diasStr = periodo === 'Q1' ? '15 Días' : `${diasPagados} Días`;
+        addRow(`Sueldo Básico Quincenal (${diasStr})`, calc.sueldo_periodo, null);
     }
 
-    y += 2;
-    
-    // Filas de Deducciones
-    addRow("(-) S.S.O (IVSS) - 4%", "-------", null, ivssReal);
-    addRow("(-) R.P.E (Paro Forzoso) - 0.5%", "-------", null, spfReal);
-    addRow("(-) F.A.O.V (Vivienda) - 1%", "-------", null, faovReal);
+    // Deducciones
+    addRow("S.S.O (IVSS) - 4%", null, calc.deduccion_ivss);
+    addRow("R.P.E (Paro Forzoso) - 0.5%", null, calc.deduccion_spf);
+    addRow("F.A.O.V (Vivienda) - 1%", null, calc.deduccion_faov);
 
-    y += 4;
+    y += 2;
     doc.text("--------------------------------------------------------------------------", 15, y);
     y += 5;
 
-    // Subtotales
+    // Totales
     doc.setFont("courier", "bold");
-    doc.text("SUB-TOTALES:", 15, y);
-    doc.text(`${baseAsignaciones.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 160, y, { align: "right" });
-    doc.text(`${totalDeduccionesReal.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs`, 195, y, { align: "right" });
+    doc.text("TOTAL A PAGAR:", 15, y);
+    doc.text(`${calc.neto_pagar_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 155, y, { align: "right" });
     
-    y += 5;
-    doc.text("==========================================================================", 15, y);
-    y += 6;
+    y += 8;
+    // Cestaticket
+    doc.setFontSize(8);
+    doc.text("(+) Cestaticket Socialista (No Salarial):", 15, y);
+    doc.text(`${calc.bono_alimentacion_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 155, y, { align: "right" });
     
-    // Neto a Pagar
-    doc.setFontSize(12);
-    doc.text("NETO A PAGAR:", 15, y);
-    doc.text(`${netoPagarReal.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs.`, 195, y, { align: "right" });
-    doc.setFontSize(10);
-    
-    y += 6;
-    doc.text("==========================================================================", 15, y);
-    y += 6;
-
-    // Cestaticket (No Salarial)
-    doc.text("(+) Cestaticket Socialista", 15, y);
-    doc.text("(No Salarial)", 105, y, { align: "center" }); 
-    doc.text(`${calc.bono_alimentacion_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs.`, 195, y, { align: "right" });
-
-    y += 6;
-    doc.text("==========================================================================", 15, y);
-
     // Pie de página
-    y += 20;
-    doc.text("He recibido a mi entera satisfacción el monto neto a pagar...", 15, y);
-    
-    y += 25;
-    doc.line(20, y, 90, y); // Línea Trabajador
-    doc.line(120, y, 190, y); // Línea Patrono
-    
-    y += 5;
-    doc.text("Firma del Trabajador", 55, y, { align: "center" });
-    doc.text("Firma del Patrono", 155, y, { align: "center" });
-    
-    y += 5;
-    doc.text("Huella Dactilar", 55, y, { align: "center" });
+    y += 30;
+    doc.setFontSize(9);
+    doc.text("Recibí Conforme:", 25, y);
+    doc.line(25, y + 10, 85, y + 10);
+    doc.text("Firma y Huella del Trabajador", 35, y + 15);
 
-    doc.save(`Recibo_LOTTT_${emp.cedula}.pdf`);
+    doc.text("Por la Empresa:", 125, y);
+    doc.line(125, y + 10, 185, y + 10);
+    
+    doc.save(`Recibo_Nomina_${periodo}_${emp.cedula}.pdf`);
   };
 
+  const meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      
+      {/* Header y Configuración de Periodo */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6">
+        <div>
+           <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+             <span>💰</span> Procesar Nómina
+           </h3>
+           <p className="text-sm text-slate-500">Cálculo Quincenal LOTTT</p>
+        </div>
+
+        <div className="flex flex-wrap gap-4 items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
+           <select 
+             className="bg-white border border-slate-200 text-slate-700 text-sm rounded-lg p-2.5 outline-none font-bold"
+             value={selectedMonth}
+             onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+           >
+             {meses.map((m, i) => <option key={i} value={i}>{m}</option>)}
+           </select>
+           
+           <input 
+             type="number" 
+             className="w-20 bg-white border border-slate-200 text-slate-700 text-sm rounded-lg p-2.5 outline-none font-bold"
+             value={selectedYear}
+             onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+           />
+
+           <div className="flex bg-white rounded-lg border border-slate-200 p-1">
+             <button 
+               onClick={() => setPeriodo('Q1')}
+               className={`px-4 py-1.5 rounded-md text-xs font-black uppercase tracking-wide transition-all ${periodo === 'Q1' ? 'bg-emerald-100 text-emerald-700' : 'text-slate-400 hover:text-slate-600'}`}
+             >
+               1ra Quincena
+             </button>
+             <button 
+               onClick={() => setPeriodo('Q2')}
+               className={`px-4 py-1.5 rounded-md text-xs font-black uppercase tracking-wide transition-all ${periodo === 'Q2' ? 'bg-emerald-100 text-emerald-700' : 'text-slate-400 hover:text-slate-600'}`}
+             >
+               2da Quincena
+             </button>
+           </div>
+        </div>
+      </div>
+
       <div className="bg-emerald-50 border border-emerald-100 p-6 rounded-xl flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-bold text-emerald-900">Configuración de Pago Actual</h3>
-          <p className="text-sm text-emerald-700">
-            Tasa Aplicable: <span className="font-bold font-mono">Bs. {config?.tasa_bcv}</span> | 
-            Cestaticket: <span className="font-bold font-mono">${config?.cestaticket_usd}</span>
+          <h3 className="text-sm font-black text-emerald-800 uppercase tracking-wide mb-1">Parámetros Económicos</h3>
+          <p className="text-xs text-emerald-600 font-medium">
+            Tasa BCV: <span className="font-bold">Bs. {config?.tasa_bcv}</span> | 
+            Cestaticket: <span className="font-bold">${config?.cestaticket_usd}</span> | 
+            Utilidades: <span className="font-bold">{config?.dias_utilidades || 30} días</span>
           </p>
         </div>
         <button 
           onClick={handleUpdateBcv}
           disabled={isUpdatingRate}
-          className="bg-white text-emerald-600 border border-emerald-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-emerald-100 transition-colors disabled:opacity-50"
+          className="bg-white text-emerald-600 border border-emerald-200 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest hover:bg-emerald-100 transition-colors disabled:opacity-50"
         >
-          {isUpdatingRate ? 'Actualizando...' : '🔄 Actualizar Tasa BCV (DolarAPI)'}
+          {isUpdatingRate ? '...' : 'Actualizar Tasa'}
         </button>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-        <h3 className="text-lg font-bold text-slate-800 mb-4">Previsualización de Nómina Mensual</h3>
-        
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         {loadingData ? (
-            <div className="text-center py-10 text-slate-400 font-bold uppercase tracking-widest text-xs">Cargando datos de empleados y asistencia...</div>
+            <div className="text-center py-20">
+               <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent animate-spin rounded-full mx-auto mb-4"></div>
+               <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Calculando deducciones y alícuotas...</span>
+            </div>
         ) : (
             <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 text-slate-500 uppercase text-xs">
+                <thead className="bg-[#F8F9FB] text-slate-400 uppercase text-[10px] font-black tracking-[0.1em] border-b border-slate-100">
                 <tr>
-                    <th className="px-4 py-3">Empleado</th>
-                    <th className="px-4 py-3 text-center">Ref ($)</th>
-                    <th className="px-4 py-3">Base (VEF)</th>
-                    <th className="px-4 py-3">Asistencia</th>
-                    <th className="px-4 py-3">IVSS (4%)</th>
-                    <th className="px-4 py-3">FAOV (1%)</th>
-                    <th className="px-4 py-3">Cestaticket</th>
-                    <th className="px-4 py-3 font-bold text-slate-800">Neto a Pagar</th>
-                    <th className="px-4 py-3 text-center">Acción</th>
+                    <th className="px-6 py-4">Empleado</th>
+                    <th className="px-6 py-4 text-center">Salario Integral (Base)</th>
+                    <th className="px-6 py-4 text-right">Devengado Quincena</th>
+                    <th className="px-6 py-4 text-right">Deducciones</th>
+                    <th className="px-6 py-4 text-right text-emerald-600">Neto a Pagar</th>
+                    <th className="px-6 py-4 text-center">Recibo</th>
                 </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-50">
                 {employees.map(emp => {
                     if (!config) return null;
-                    const calc = calculatePayroll(emp, config);
-                    const records = attendances.filter(a => a.empleado_id === emp.id).length;
+                    // Calcular para la quincena seleccionada (aprox 15 dias)
+                    const diasCalculo = periodo === 'Q1' ? 15 : 15; 
+                    const calc = calculatePayroll(emp, config, diasCalculo);
 
                     return (
-                    <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-4 py-3">
-                        <div className="font-bold text-slate-800">{emp.nombre} {emp.apellido}</div>
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">{emp.cargo}</div>
+                    <tr key={emp.id} className="hover:bg-slate-50 transition-colors group">
+                        <td className="px-6 py-4">
+                           <div className="font-bold text-slate-800">{emp.nombre} {emp.apellido}</div>
+                           <div className="text-[10px] text-slate-400 font-bold uppercase">{emp.cargo}</div>
                         </td>
-                        <td className="px-4 py-3 font-mono text-center text-slate-400">${emp.salario_usd}</td>
-                        <td className="px-4 py-3 font-mono font-bold text-slate-600">
-                        Bs. {Number(emp.salario_base_vef || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                        <td className="px-6 py-4 text-center">
+                           <div className="text-xs font-bold text-slate-600">Bs. {calc.salario_diario_integral.toLocaleString('es-VE', {minimumFractionDigits: 2})}</div>
+                           <div className="text-[9px] text-slate-400">Diario Integral</div>
                         </td>
-                        <td className="px-4 py-3">
-                           {records > 0 ? (
-                               <span className="text-emerald-600 font-black text-xs bg-emerald-100 px-2 py-1 rounded">{records} días reg.</span>
-                           ) : (
-                               <span className="text-amber-500 font-black text-xs bg-amber-100 px-2 py-1 rounded">Sin Data</span>
-                           )}
+                        <td className="px-6 py-4 text-right font-mono font-medium text-slate-700">
+                           Bs. {calc.sueldo_periodo.toLocaleString('es-VE', {minimumFractionDigits: 2})}
                         </td>
-                        <td className="px-4 py-3 font-mono text-rose-400">-{calc.deduccion_ivss.toFixed(2)}</td>
-                        <td className="px-4 py-3 font-mono text-rose-400">-{calc.deduccion_faov.toFixed(2)}</td>
-                        <td className="px-4 py-3 font-mono text-emerald-500">+{calc.bono_alimentacion_vef.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
-                        <td className="px-4 py-3 font-mono font-black text-slate-900">
-                        Bs. {calc.neto_pagar_vef.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                        <td className="px-6 py-4 text-right font-mono text-rose-500 text-xs">
+                           - {calc.total_deducciones.toLocaleString('es-VE', {minimumFractionDigits: 2})}
                         </td>
-                        <td className="px-4 py-3 text-center">
+                        <td className="px-6 py-4 text-right">
+                           <div className="font-black text-emerald-600 text-base">
+                             Bs. {calc.neto_pagar_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}
+                           </div>
+                           <div className="text-[9px] text-emerald-400 font-bold uppercase tracking-tight">+ Cestaticket</div>
+                        </td>
+                        <td className="px-6 py-4 text-center">
                         <button 
                             onClick={() => generatePDF(emp, calc)}
-                            className="p-2 hover:bg-emerald-50 text-slate-300 hover:text-emerald-600 rounded-lg transition-all flex flex-col items-center gap-1"
-                            title="Descargar Recibo LOTTT"
+                            className="bg-white border border-slate-200 hover:border-emerald-400 hover:text-emerald-600 text-slate-400 p-2 rounded-xl transition-all shadow-sm active:scale-95"
+                            title="Descargar Recibo Legal"
                         >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                            <span className="text-[8px] font-black uppercase">Recibo</span>
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
                         </button>
                         </td>
                     </tr>
@@ -344,11 +375,6 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
             </table>
             </div>
         )}
-        <div className="mt-8 flex justify-end">
-          <button className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all shadow-xl">
-             Confirmar y Cerrar Nómina Mensual
-          </button>
-        </div>
       </div>
     </div>
   );

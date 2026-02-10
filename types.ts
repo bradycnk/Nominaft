@@ -4,6 +4,8 @@ export interface ConfigGlobal {
   tasa_bcv: number;
   cestaticket_usd: number;
   salario_minimo_vef: number;
+  dias_utilidades: number;
+  dias_bono_vacacional_base: number;
   updated_at: string;
 }
 
@@ -30,6 +32,7 @@ export interface Empleado {
   foto_url?: string;
   cv_url?: string;
   sucursal_id?: string;
+  prestaciones_acumuladas_vef?: number;
   
   // Nuevos campos Legales/Personales
   fecha_nacimiento?: string;
