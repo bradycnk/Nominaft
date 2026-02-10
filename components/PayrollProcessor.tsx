@@ -120,67 +120,89 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     // Generación PDF
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.width;
+    const fechaEmision = new Date().toLocaleString('es-VE');
     
     // --- Header ---
     try {
         const imgProps = doc.getImageProperties(LOGO_URL);
         const imgWidth = 25;
         const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
-        doc.addImage(LOGO_URL, 'JPEG', 15, 10, imgWidth, imgHeight);
+        // Bajamos el logo y contenido (y=15)
+        doc.addImage(LOGO_URL, 'JPEG', 15, 15, imgWidth, imgHeight);
     } catch (e) { console.warn("Logo error", e); }
 
     doc.setFont("courier", "bold");
     doc.setFontSize(14);
-    doc.text("RECIBO DE PAGO DE NÓMINA", pageWidth / 2, 20, { align: "center" });
+    // Título un poco más abajo
+    doc.text("RECIBO DE PAGO DE NÓMINA", pageWidth / 2, 25, { align: "center" });
     
+    // Fecha y hora de emisión (Top Right)
+    doc.setFontSize(8);
+    doc.setFont("courier", "normal");
+    doc.text(`Emisión: ${fechaEmision}`, pageWidth - 15, 15, { align: "right" });
+
     doc.setFontSize(9);
     doc.setFont("courier", "normal");
     
-    let y = 35;
-    doc.text(`EMPRESA: ${emp.sucursales?.nombre_id || 'FarmaNomina C.A.'}`, 15, y);
-    doc.text(`RIF: ${emp.sucursales?.rif || 'J-12345678-9'}`, 140, y);
-    y += 5;
-    const direccion = emp.sucursales?.direccion || 'Sede Principal';
-    doc.text(`DIR: ${direccion.substring(0, 80)}`, 15, y);
+    // Bajamos 3 líneas más aprox. para que no choque con el logo (y=50)
+    let y = 50;
     
-    y += 8;
+    // Alineación derecha usando pageWidth - margen
+    doc.text(`EMPRESA: ${emp.sucursales?.nombre_id || 'FarmaNomina C.A.'}`, 15, y);
+    doc.text(`RIF: ${emp.sucursales?.rif || 'J-12345678-9'}`, pageWidth - 15, y, { align: "right" });
+    y += 5;
+    
+    const direccion = emp.sucursales?.direccion || 'Sede Principal';
+    // Dividir texto si es muy largo para no salir del margen
+    const splitDireccion = doc.splitTextToSize(`DIR: ${direccion}`, pageWidth - 30);
+    doc.text(splitDireccion, 15, y);
+    y += (splitDireccion.length * 5); // Ajustar altura dinámica
+    
+    y += 3;
     doc.text("==========================================================================", 15, y);
     y += 5;
 
     // Datos Trabajador
     doc.setFont("courier", "bold");
     doc.text(`TRABAJADOR: ${emp.nombre} ${emp.apellido}`, 15, y);
-    doc.text(`C.I.: ${emp.cedula}`, 140, y);
+    doc.text(`C.I.: ${emp.cedula}`, pageWidth - 15, y, { align: "right" });
     doc.setFont("courier", "normal");
-    y += 5;
-    doc.text(`Cargo: ${emp.cargo || 'General'}`, 15, y);
-    doc.text(`Ingreso: ${emp.fecha_ingreso}`, 140, y);
-    y += 5;
-    doc.text(`Antigüedad: ${calc.anios_servicio} años`, 15, y);
-    doc.text(`Período: ${fechaDesde} al ${fechaHasta} (${periodo})`, 140, y);
     y += 5;
     
+    doc.text(`Cargo: ${emp.cargo || 'General'}`, 15, y);
+    doc.text(`Ingreso: ${emp.fecha_ingreso}`, pageWidth - 15, y, { align: "right" });
+    y += 5;
+    
+    doc.text(`Antigüedad: ${calc.anios_servicio} años`, 15, y);
+    doc.text(`Período: ${fechaDesde} al ${fechaHasta} (${periodo})`, pageWidth - 15, y, { align: "right" });
+    y += 6;
+    
     // SALARIO INTEGRAL (Base de cálculo)
-    doc.setFillColor(240, 240, 240);
-    doc.rect(15, y, pageWidth - 30, 15, 'F');
+    doc.setFillColor(245, 245, 245);
+    doc.rect(15, y, pageWidth - 30, 20, 'F'); // Aumentamos altura de la caja
     y += 4;
     doc.setFont("courier", "bold");
+    doc.setFontSize(9);
     doc.text("INFORMACIÓN SALARIAL (BASE DE CÁLCULO PRESTACIONES)", 20, y);
-    y += 4;
+    y += 5;
+    
     doc.setFont("courier", "normal");
     doc.setFontSize(8);
-    doc.text(`Salario Diario Normal: Bs. ${calc.salario_diario_normal.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 20, y);
-    doc.text(`+ Alícuota Utilidades: Bs. ${calc.alicuota_utilidades_diaria.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 85, y);
-    doc.text(`+ Alícuota Vacaciones: Bs. ${calc.alicuota_vacaciones_diaria.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 145, y);
-    y += 4;
+    // Distribución horizontal controlada
+    doc.text(`Salario Diario: Bs. ${calc.salario_diario_normal.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 20, y);
+    doc.text(`+ Alic. Utilidades: Bs. ${calc.alicuota_utilidades_diaria.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 80, y);
+    doc.text(`+ Alic. Vacaciones: Bs. ${calc.alicuota_vacaciones_diaria.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 140, y);
+    y += 5;
+    
     doc.setFont("courier", "bold");
     doc.text(`= SALARIO INTEGRAL DIARIO: Bs. ${calc.salario_diario_integral.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 20, y);
-    y += 6;
+    y += 10; // Salir de la caja
     
     // Prestaciones Acumuladas
     doc.setFontSize(8);
+    doc.setFont("courier", "normal");
     const acumulado = emp.prestaciones_acumuladas_vef || 0;
-    doc.text(`GARANTÍA PRESTACIONES ACUMULADA: Bs. ${acumulado.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 140, y, {align: 'right'});
+    doc.text(`GARANTÍA PRESTACIONES ACUMULADA: Bs. ${acumulado.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, pageWidth - 15, y, {align: 'right'});
     y += 5;
 
     doc.setFontSize(9);
@@ -190,16 +212,19 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     y += 5;
     doc.setFont("courier", "bold");
     doc.text("CONCEPTOS", 15, y);
-    doc.text("ASIGNACIONES", 155, y, { align: "right" });
-    doc.text("DEDUCCIONES", 195, y, { align: "right" });
+    doc.text("ASIGNACIONES", 145, y, { align: "right" });
+    doc.text("DEDUCCIONES", 195, y, { align: "right" }); // Alineado al margen derecho (210-15=195)
     doc.setFont("courier", "normal");
     y += 4;
     doc.text("--------------------------------------------------------------------------", 15, y);
     y += 5;
 
     const addRow = (concepto: string, asignacion: number | null, deduccion: number | null) => {
-        doc.text(concepto, 15, y);
-        if (asignacion !== null) doc.text(`${asignacion.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 155, y, { align: "right" });
+        // Truncar concepto si es muy largo
+        const conceptoLimpio = concepto.length > 45 ? concepto.substring(0, 42) + '...' : concepto;
+        doc.text(conceptoLimpio, 15, y);
+        
+        if (asignacion !== null) doc.text(`${asignacion.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 145, y, { align: "right" });
         if (deduccion !== null) doc.text(`${deduccion.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 195, y, { align: "right" });
         y += 5;
     };
@@ -225,14 +250,14 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     // Totales
     doc.setFont("courier", "bold");
     doc.text("TOTAL A PAGAR:", 15, y);
-    doc.text(`${calc.neto_pagar_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 155, y, { align: "right" });
+    doc.text(`${calc.neto_pagar_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 145, y, { align: "right" });
     
     y += 8;
     // Cestaticket (Lógica visual: Solo si > 0)
     if (calc.bono_alimentacion_vef > 0) {
         doc.setFontSize(8);
         doc.text("(+) Cestaticket Socialista (No Salarial):", 15, y);
-        doc.text(`${calc.bono_alimentacion_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 155, y, { align: "right" });
+        doc.text(`${calc.bono_alimentacion_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 145, y, { align: "right" });
     } else if (periodo === 'Q1') {
         doc.setFontSize(8);
         doc.setTextColor(150, 150, 150);
