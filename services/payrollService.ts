@@ -21,11 +21,13 @@ export const calculateSeniorityYears = (fechaIngreso: string): number => {
 
 /**
  * Calcula la nómina detallada (Normal e Integral) para un periodo específico.
+ * @param periodo 'Q1' (1ra Quincena) o 'Q2' (2da Quincena)
  */
 export const calculatePayroll = (
   empleado: Empleado,
   config: ConfigGlobal,
-  diasTrabajados: number = 15 // Por defecto quincenal
+  diasTrabajados: number = 15, // Por defecto quincenal
+  periodo: 'Q1' | 'Q2' = 'Q1'
 ) => {
   const tasa = config.tasa_bcv;
   
@@ -67,8 +69,11 @@ export const calculatePayroll = (
   const deduccionFaov = sueldoPeriodoVef * 0.01; // 1% (Sin tope)
 
   // 4. Cestaticket (Bono de Alimentación)
+  // SE PAGA COMPLETO AL FINAL DE MES (Q2)
   const cestaticketMensualVef = config.cestaticket_usd * tasa;
-  const bonoAlimentacionVef = (cestaticketMensualVef / 30) * diasTrabajados;
+  
+  // Si es Q1 -> 0, Si es Q2 -> Monto Mensual Completo
+  const bonoAlimentacionVef = periodo === 'Q2' ? cestaticketMensualVef : 0;
 
   const totalDeducciones = deduccionIvss + deduccionSpf + deduccionFaov;
   const netoPagarVef = sueldoPeriodoVef + bonoAlimentacionVef - totalDeducciones;

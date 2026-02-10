@@ -157,7 +157,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     doc.text(`Ingreso: ${emp.fecha_ingreso}`, 140, y);
     y += 5;
     doc.text(`Antigüedad: ${calc.anios_servicio} años`, 15, y);
-    doc.text(`Período: ${fechaDesde} al ${fechaHasta}`, 140, y);
+    doc.text(`Período: ${fechaDesde} al ${fechaHasta} (${periodo})`, 140, y);
     y += 5;
     
     // SALARIO INTEGRAL (Base de cálculo)
@@ -228,10 +228,17 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     doc.text(`${calc.neto_pagar_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 155, y, { align: "right" });
     
     y += 8;
-    // Cestaticket
-    doc.setFontSize(8);
-    doc.text("(+) Cestaticket Socialista (No Salarial):", 15, y);
-    doc.text(`${calc.bono_alimentacion_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 155, y, { align: "right" });
+    // Cestaticket (Lógica visual: Solo si > 0)
+    if (calc.bono_alimentacion_vef > 0) {
+        doc.setFontSize(8);
+        doc.text("(+) Cestaticket Socialista (No Salarial):", 15, y);
+        doc.text(`${calc.bono_alimentacion_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 155, y, { align: "right" });
+    } else if (periodo === 'Q1') {
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text("(*) Cestaticket Socialista: Se paga en 2da Quincena", 15, y);
+        doc.setTextColor(0, 0, 0);
+    }
     
     // Pie de página
     y += 30;
@@ -287,7 +294,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
                onClick={() => setPeriodo('Q2')}
                className={`px-4 py-1.5 rounded-md text-xs font-black uppercase tracking-wide transition-all ${periodo === 'Q2' ? 'bg-emerald-100 text-emerald-700' : 'text-slate-400 hover:text-slate-600'}`}
              >
-               2da Quincena
+               2da Quincena (Cestaticket)
              </button>
            </div>
         </div>
@@ -335,7 +342,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
                     if (!config) return null;
                     // Calcular para la quincena seleccionada (aprox 15 dias)
                     const diasCalculo = periodo === 'Q1' ? 15 : 15; 
-                    const calc = calculatePayroll(emp, config, diasCalculo);
+                    const calc = calculatePayroll(emp, config, diasCalculo, periodo);
 
                     return (
                     <tr key={emp.id} className="hover:bg-slate-50 transition-colors group">
@@ -357,7 +364,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
                            <div className="font-black text-emerald-600 text-base">
                              Bs. {calc.neto_pagar_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}
                            </div>
-                           <div className="text-[9px] text-emerald-400 font-bold uppercase tracking-tight">+ Cestaticket</div>
+                           {periodo === 'Q2' && <div className="text-[9px] text-emerald-400 font-bold uppercase tracking-tight">+ Cestaticket</div>}
                         </td>
                         <td className="px-6 py-4 text-center">
                         <button 
