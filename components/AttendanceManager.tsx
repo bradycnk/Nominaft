@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase.ts';
 import { Empleado, Asistencia } from '../types.ts';
+import { calculateDetailedShift } from '../services/payrollService.ts';
 
 const AttendanceManager: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'daily' | 'calendar'>('daily');
@@ -57,13 +58,8 @@ const AttendanceManager: React.FC = () => {
         attMap[a.empleado_id] = a;
       });
       
-      // Actualizamos tanto el formulario como el estado guardado
-      setAttendances(prev => {
-        // Mantenemos lo que el usuario esté escribiendo si no hay datos nuevos, 
-        // pero idealmente al recargar pisamos con la DB.
-        return { ...attMap };
-      });
-      setSavedAttendances(JSON.parse(JSON.stringify(attMap))); // Copia profunda para el estado guardado
+      setAttendances(prev => ({ ...attMap }));
+      setSavedAttendances(JSON.parse(JSON.stringify(attMap))); 
 
     } catch (err) {
       console.error("Error cargando asistencia:", err);
@@ -86,7 +82,6 @@ const AttendanceManager: React.FC = () => {
     setEmployeeHistory(data || []);
   };
 
-  // Manejo de cambios en los inputs temporales (antes de guardar)
   const handleTimeChange = (empId: string, field: 'hora_entrada' | 'hora_salida', value: string) => {
     setAttendances(prev => ({
       ...prev,
@@ -122,7 +117,7 @@ const AttendanceManager: React.FC = () => {
         .upsert(payload, { onConflict: 'empleado_id,fecha' });
 
       if (error) throw error;
-      await fetchInitialData(); // Recargar para confirmar estado guardado
+      await fetchInitialData();
     } catch (err: any) {
       alert("Error al guardar entrada: " + err.message);
     } finally {
@@ -131,16 +126,13 @@ const AttendanceManager: React.FC = () => {
   };
 
   const saveExit = async (empId: string) => {
-    // Usamos savedAttendances para validar contra la DB
     const savedData = savedAttendances[empId];
-
     if (savedData?.cerrado) return alert("El día ya está cerrado administrativamente. No se pueden hacer cambios.");
     if (!savedData?.hora_entrada) return alert("Error: No hay hora de entrada registrada en el sistema.");
     
     const data = attendances[empId];
     if (!data?.hora_salida) return alert("Ingrese la hora de salida");
 
-    // Validación LOTTT: Salida > Entrada
     if (data.hora_salida <= savedData.hora_entrada) {
       return alert("La hora de salida debe ser posterior a la entrada.");
     }
@@ -169,7 +161,6 @@ const AttendanceManager: React.FC = () => {
     const startDate = new Date(selectedYear, selectedMonth, startDay).toISOString().split('T')[0];
     const endDate = new Date(selectedYear, selectedMonth, endDay).toISOString().split('T')[0];
 
-    // Validación: No cerrar fechas futuras
     const now = new Date();
     const rangeEnd = new Date(selectedYear, selectedMonth, endDay);
     if (rangeEnd > now && !confirm("¡Atención! Está intentando cerrar una quincena que aún no ha terminado. ¿Desea continuar?")) {
@@ -216,7 +207,7 @@ const AttendanceManager: React.FC = () => {
     const [h2, m2] = salida.split(':').map(Number);
     const date1 = new Date(0, 0, 0, h1, m1);
     const date2 = new Date(0, 0, 0, h2, m2);
-    let diff = (date2.getTime() - date1.getTime()) / 1000 / 60 / 60; // Horas
+    let diff = (date2.getTime() - date1.getTime()) / 1000 / 60 / 60;
     return diff > 0 ? diff : 0;
   };
 
@@ -251,80 +242,115 @@ const AttendanceManager: React.FC = () => {
     const days = getDaysInMonth(selectedMonth, selectedYear);
     const weekDays = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
     
-    // Relleno para que el mes empiece en el día correcto de la semana
     const firstDayIndex = days[0].getDay();
     const blanks = Array(firstDayIndex).fill(null);
 
     return (
       <div className="grid grid-cols-7 gap-2 mb-6">
         {weekDays.map(d => (
-          <div key={d} className="text-center text-[10px] font-black text-slate-400 uppercase tracking-widest py-2">
+          <div key={d} className={`text-center text-[10px] font-black uppercase tracking-widest py-2 ${d === 'Dom' ? 'text-rose-400' : 'text-slate-400'}`}>
             {d}
           </div>
         ))}
         
-        {blanks.map((_, i) => <div key={`blank-${i}`} className="h-24 bg-transparent"></div>)}
+        {blanks.map((_, i) => <div key={`blank-${i}`} className="h-28 bg-transparent"></div>)}
 
         {days.map(date => {
           const dateStr = date.toISOString().split('T')[0];
           const record = employeeHistory.find(h => h.fecha === dateStr);
-          const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-          const hours = record ? calculateHoursWorked(record.hora_entrada, record.hora_salida) : 0;
-          const isOvertime = hours > 8; // LOTTT: Más de 8h es extra (Jornada Diurna)
+          const isSunday = date.getDay() === 0;
+
+          // Cálculo detallado usando el servicio compartido
+          const details = calculateDetailedShift(
+            record?.hora_entrada || '', 
+            record?.hora_salida || '', 
+            dateStr
+          );
+          
+          const totalExtras = details.extraDiurna + details.extraNocturna;
+          const totalWorked = details.normal + totalExtras;
+          
+          // Lógica visual para Horario Mixto/Nocturno (Salida > 19:00 / 7PM)
+          // O si el servicio detectó horas nocturnas
+          const isMixedShift = (record?.hora_salida && record.hora_salida >= '19:00') || details.extraNocturna > 0;
 
           let bgColor = 'bg-white';
           let borderColor = 'border-slate-100';
           
           if (record?.estado === 'presente') {
-            bgColor = 'bg-emerald-50';
-            borderColor = 'border-emerald-200';
+            bgColor = isSunday ? 'bg-amber-50' : 'bg-emerald-50';
+            borderColor = isSunday ? 'border-amber-200' : 'border-emerald-200';
           } else if (record?.estado === 'falta') {
             bgColor = 'bg-rose-50';
             borderColor = 'border-rose-200';
-          } else if (isWeekend) {
+          } else if (isSunday) {
             bgColor = 'bg-slate-50';
           }
 
           if (record?.cerrado) {
             borderColor = 'border-slate-400';
-            // bgColor = 'bg-slate-100'; // Opcional: Oscurecer cerrados
           }
 
           return (
-            <div key={dateStr} className={`h-24 border rounded-xl p-2 flex flex-col justify-between transition-all hover:scale-105 ${bgColor} ${borderColor} ${record?.cerrado ? 'opacity-80' : ''}`}>
-              <div className="flex justify-between items-start">
-                <span className={`text-xs font-bold ${isWeekend ? 'text-slate-400' : 'text-slate-700'}`}>
+            <div key={dateStr} className={`h-28 border rounded-xl p-2 flex flex-col relative transition-all hover:shadow-md ${bgColor} ${borderColor} ${record?.cerrado ? 'opacity-80' : ''}`}>
+              {/* Header Día */}
+              <div className="flex justify-between items-start mb-1">
+                <span className={`text-xs font-bold ${isSunday ? 'text-rose-500' : 'text-slate-700'}`}>
                   {date.getDate()}
                 </span>
                 <div className="flex gap-1">
-                  {record?.cerrado && (
-                    <span className="text-[9px]" title="Cerrado/Pagado">🔒</span>
-                  )}
-                  {record?.estado === 'presente' && (
-                    <span className="text-[9px] font-black text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">
-                      ASISTIO
-                    </span>
-                  )}
+                  {record?.cerrado && <span className="text-[9px]" title="Pagado">🔒</span>}
                   {record?.estado === 'falta' && (
-                     <span className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded">
-                      FALTA
-                    </span>
+                     <span className="text-[8px] font-black text-rose-600 bg-rose-100 px-1 rounded">FALTA</span>
                   )}
                 </div>
               </div>
               
-              <div className="text-center">
-                 {record?.hora_entrada && (
-                   <div className="text-[10px] text-slate-500 font-mono">
-                     {record.hora_entrada.slice(0,5)} - {record.hora_salida?.slice(0,5) || '?'}
-                   </div>
-                 )}
-                 {hours > 0 && (
-                   <div className={`text-[10px] font-bold mt-1 ${isOvertime ? 'text-amber-600' : 'text-slate-600'}`}>
-                     {hours.toFixed(1)} hrs {isOvertime && '(Extra)'}
-                   </div>
-                 )}
-              </div>
+              {/* Contenido Asistencia */}
+              {record?.estado === 'presente' ? (
+                <div className="flex flex-col gap-0.5 mt-auto">
+                    {/* Hora Entrada/Salida */}
+                    <div className="text-[9px] text-slate-500 font-mono mb-1">
+                        {record.hora_entrada?.slice(0,5)} - {record.hora_salida?.slice(0,5) || '?'}
+                    </div>
+
+                    {isSunday ? (
+                        /* Lógica Domingo: Todo cuenta como especial */
+                        <div className="bg-amber-100 text-amber-700 text-[9px] font-bold px-1.5 py-0.5 rounded border border-amber-200 text-center">
+                            D. Descanso: {details.descanso > 0 ? details.descanso.toFixed(1) : totalWorked.toFixed(1)}h
+                        </div>
+                    ) : (
+                        /* Lógica Lunes-Sábado */
+                        <>
+                            {/* Horas Normales */}
+                            <div className="flex justify-between items-center">
+                                <span className="text-[9px] text-slate-500">Normal:</span>
+                                <span className="text-[9px] font-bold text-slate-700">{details.normal.toFixed(1)}h</span>
+                            </div>
+
+                            {/* Horas Extras (Si existen) */}
+                            {totalExtras > 0 && (
+                                <div className="flex justify-between items-center bg-white/50 px-1 rounded">
+                                    <span className="text-[9px] text-emerald-600 font-bold">+ Extra:</span>
+                                    <span className="text-[9px] font-black text-emerald-700">{totalExtras.toFixed(1)}h</span>
+                                </div>
+                            )}
+
+                            {/* Indicador Mixto/Nocturno */}
+                            {isMixedShift && (
+                                <div className="mt-1 text-center bg-indigo-100 text-indigo-700 text-[8px] font-black uppercase rounded py-0.5 px-1 border border-indigo-200 flex items-center justify-center gap-1">
+                                    <span>🌙</span> H. Mixto
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+              ) : (
+                 /* Sin asistencia */
+                 <div className="mt-auto text-center text-[9px] text-slate-300 font-medium uppercase">
+                    - Sin Reg -
+                 </div>
+              )}
             </div>
           );
         })}
@@ -385,10 +411,9 @@ const AttendanceManager: React.FC = () => {
                 {loading ? (
                   <tr><td colSpan={4} className="p-10 text-center text-slate-400 font-bold uppercase text-xs tracking-widest">Sincronizando reloj biométrico...</td></tr>
                 ) : employees.map(emp => {
-                  const att = attendances[emp.id]; // Estado del Formulario (Inputs)
-                  const savedAtt = savedAttendances[emp.id]; // Estado de la Base de Datos
+                  const att = attendances[emp.id];
+                  const savedAtt = savedAttendances[emp.id];
 
-                  // Verificamos si YA está guardado en base de datos para bloquear/mostrar checks
                   const entrySaved = !!savedAtt?.id; 
                   const exitSaved = !!savedAtt?.hora_salida;
                   const isClosed = savedAtt?.cerrado;
@@ -407,7 +432,6 @@ const AttendanceManager: React.FC = () => {
                         </div>
                       </td>
                       
-                      {/* COLUMNA ENTRADA */}
                       <td className="px-8 py-5">
                         <div className="flex items-center gap-2">
                           <input 
@@ -433,7 +457,6 @@ const AttendanceManager: React.FC = () => {
                         </div>
                       </td>
 
-                      {/* COLUMNA SALIDA */}
                       <td className="px-8 py-5">
                          <div className="flex items-center gap-2">
                            <input 
@@ -443,7 +466,6 @@ const AttendanceManager: React.FC = () => {
                              disabled={!entrySaved || exitSaved || isClosed}
                              className={`px-4 py-2 rounded-xl border text-xs font-mono font-bold outline-none transition-all w-32 ${exitSaved || isClosed ? 'bg-slate-50 text-slate-500 border-slate-100' : !entrySaved ? 'bg-slate-100 text-slate-300 border-slate-100 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 focus:ring-2 focus:ring-emerald-500'}`}
                            />
-                           {/* Mostrar botón si la entrada está guardada PERO la salida aún NO está guardada en DB */}
                            {entrySaved && !exitSaved && !isClosed && (
                               <button 
                                 onClick={() => saveExit(emp.id)}
@@ -459,7 +481,6 @@ const AttendanceManager: React.FC = () => {
                          </div>
                       </td>
 
-                      {/* COLUMNA ESTATUS */}
                       <td className="px-8 py-5">
                         {isClosed ? (
                            <span className="px-3 py-1.5 bg-slate-100 text-slate-400 rounded-lg text-[9px] font-black uppercase tracking-wider border border-slate-200">
@@ -571,7 +592,7 @@ const AttendanceManager: React.FC = () => {
       )}
 
       <div className="p-4 bg-slate-50 border-t border-slate-100 text-[10px] text-slate-400 font-bold uppercase text-center tracking-widest">
-        Sistema sincronizado con horario legal LOTTT Venezuela • Jornada Diurna
+        Sistema sincronizado con horario legal LOTTT Venezuela • Jornada Diurna/Mixta
       </div>
     </div>
   );
