@@ -1,13 +1,108 @@
 
-import { ConfigGlobal, Empleado } from '../types.ts';
+import { ConfigGlobal, Empleado, Asistencia } from '../types.ts';
 
 // Constantes Legales
 const TOPE_IVSS_SALARIOS_MINIMOS = 5;
-const TOPE_SPF_SALARIOS_MINIMOS = 10; // Aunque comúnmente se usa 5 o 10 dependiendo de la interpretación, usaremos 5 para estándar seguro o base total. Usualmente IVSS y SPF tienen tope 5 SM.
+const TOPE_SPF_SALARIOS_MINIMOS = 10; 
 
 /**
- * Calcula la antigüedad del empleado en años.
+ * Convierte formato HH:MM a decimal (Ej: "08:30" -> 8.5)
  */
+export const timeToDecimal = (timeStr: string): number => {
+  if (!timeStr) return 0;
+  const [h, m] = timeStr.split(':').map(Number);
+  return h + (m / 60);
+};
+
+/**
+ * Analiza un turno individual para desglosar tipos de horas.
+ * Regla: Primeras 8h son normales. El resto son extras.
+ * Extras > 19:00 (7PM) son Nocturnas.
+ */
+export const calculateDetailedShift = (entrada: string, salida: string, fecha: string) => {
+  if (!entrada || !salida) return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: 0 };
+
+  const start = timeToDecimal(entrada);
+  const end = timeToDecimal(salida);
+  
+  // Manejo de turno que cruza medianoche (simple)
+  let duration = end - start;
+  if (duration < 0) duration += 24; 
+
+  const dateObj = new Date(fecha);
+  // Ajuste de zona horaria simple para evitar problemas de día
+  const day = dateObj.getDay(); // 0 Dom, 6 Sab
+  const isWeekend = day === 0 || day === 6;
+
+  // Si es fin de semana, TODO cuenta como horas de descanso (generalmente pagadas al 1.5x completo)
+  if (isWeekend) {
+    return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: duration };
+  }
+
+  // Jornada Regular (Lunes a Viernes)
+  let normal = 0;
+  let extraDiurna = 0;
+  let extraNocturna = 0;
+
+  if (duration <= 8) {
+    normal = duration;
+  } else {
+    normal = 8;
+    const extraDuration = duration - 8;
+    
+    // Calcular a qué hora empezaron las extras
+    // Si entró a las 8am (8.0), las extras empiezan a las 4pm (16.0)
+    let extraStartTime = start + 8;
+    if (extraStartTime >= 24) extraStartTime -= 24;
+
+    let extraEndTime = end;
+    
+    // Definir límite nocturno (19:00 = 7 PM)
+    const nightLimit = 19.0;
+
+    // Analizamos el bloque de horas extras
+    // Caso 1: Todo el bloque extra es antes de las 7pm (Ej: 16:00 a 18:00)
+    if (extraEndTime <= nightLimit) {
+      extraDiurna = extraDuration;
+    }
+    // Caso 2: Todo el bloque extra es después de las 7pm (Ej: 20:00 a 22:00)
+    else if (extraStartTime >= nightLimit) {
+      extraNocturna = extraDuration;
+    }
+    // Caso 3: Mixto (Ej: 18:00 a 20:00 -> 1h diurna, 1h nocturna)
+    else {
+      extraDiurna = nightLimit - extraStartTime;
+      extraNocturna = extraEndTime - nightLimit;
+    }
+  }
+
+  return { normal, extraDiurna, extraNocturna, descanso: 0 };
+};
+
+/**
+ * Procesa un array de asistencias y devuelve los totales acumulados
+ */
+export const processAttendanceRecords = (asistencias: Asistencia[]) => {
+  let totalNormal = 0;
+  let totalExtraDiurna = 0;
+  let totalExtraNocturna = 0;
+  let totalDescanso = 0;
+  let diasTrabajados = 0;
+
+  asistencias.forEach(att => {
+    if (att.estado === 'presente' && att.hora_entrada && att.hora_salida) {
+      const breakdown = calculateDetailedShift(att.hora_entrada, att.hora_salida, att.fecha);
+      totalNormal += breakdown.normal;
+      totalExtraDiurna += breakdown.extraDiurna;
+      totalExtraNocturna += breakdown.extraNocturna;
+      totalDescanso += breakdown.descanso;
+      diasTrabajados++;
+    }
+  });
+
+  return { totalNormal, totalExtraDiurna, totalExtraNocturna, totalDescanso, diasTrabajados };
+};
+
 export const calculateSeniorityYears = (fechaIngreso: string): number => {
   const ingreso = new Date(fechaIngreso);
   const hoy = new Date();
@@ -19,10 +114,6 @@ export const calculateSeniorityYears = (fechaIngreso: string): number => {
   return anios < 0 ? 0 : anios;
 };
 
-/**
- * Calcula la nómina detallada (Normal e Integral) para un periodo específico.
- * @param periodo 'Q1' (1ra Quincena) o 'Q2' (2da Quincena)
- */
 export const calculatePayroll = (
   empleado: Empleado,
   config: ConfigGlobal,
@@ -38,49 +129,29 @@ export const calculatePayroll = (
 
   // 2. Cálculo de Alícuotas para Salario Integral (Art 104 LOTTT)
   const aniosServicio = calculateSeniorityYears(empleado.fecha_ingreso);
-  
-  // Bono Vacacional: 15 días + 1 por año de servicio (Max 30)
   const diasBonoVacacional = Math.min(30, config.dias_bono_vacacional_base + Math.max(0, aniosServicio - 1));
-  
-  // Utilidades: Según configuración (Mínimo 30 días)
   const diasUtilidades = config.dias_utilidades;
 
-  // Alícuotas Diarias
   const alicuotaBonoVacacionalDiaria = (salarioDiarioNormal * diasBonoVacacional) / 360;
   const alicuotaUtilidadesDiaria = (salarioDiarioNormal * diasUtilidades) / 360;
   
   const salarioDiarioIntegral = salarioDiarioNormal + alicuotaBonoVacacionalDiaria + alicuotaUtilidadesDiaria;
 
-  // 3. Deducciones de Ley (Sobre Salario Normal, con topes si aplica, simplificado a base total por ahora o tope de ley)
-  // Nota: Para IVSS y SPF se suele usar el Salario Normal Mensual con Tope de 5 Salarios Mínimos
+  // 3. Deducciones de Ley
   const salarioMinimo = config.salario_minimo_vef;
   const topeIvss = salarioMinimo * TOPE_IVSS_SALARIOS_MINIMOS;
-  
-  // Base imponible para IVSS/SPF (Mensual acotada)
-  const baseImponibleMensual = Math.min(sueldoMensualVef, topeIvss);
-  
-  // Lógica de Lunes del IVSS (Variable por mes, promediamos a semanas estándar para recibo quincenal o usamos la formula: (Sueldo * 12 / 52) * lunes_periodo)
-  // Para simplificación quincenal estándar: (SueldoMensual * 4% * Lunes) / 2 o Directo 4% del devengado.
-  // La práctica más común en sistemas simplificados es 4% del Salario Normal del Periodo (respetando tope).
   const baseImponiblePeriodo = Math.min(sueldoPeriodoVef, (topeIvss / 30) * diasTrabajados);
 
-  const deduccionIvss = baseImponiblePeriodo * 0.04; // 4%
-  const deduccionSpf = baseImponiblePeriodo * 0.005; // 0.5%
-  const deduccionFaov = sueldoPeriodoVef * 0.01; // 1% (Sin tope)
+  const deduccionIvss = baseImponiblePeriodo * 0.04; 
+  const deduccionSpf = baseImponiblePeriodo * 0.005; 
+  const deduccionFaov = sueldoPeriodoVef * 0.01; 
 
-  // 4. Cestaticket (Bono de Alimentación)
-  // SE PAGA COMPLETO AL FINAL DE MES (Q2)
+  // 4. Cestaticket
   const cestaticketMensualVef = config.cestaticket_usd * tasa;
-  
-  // Si es Q1 -> 0, Si es Q2 -> Monto Mensual Completo
   const bonoAlimentacionVef = periodo === 'Q2' ? cestaticketMensualVef : 0;
 
   const totalDeducciones = deduccionIvss + deduccionSpf + deduccionFaov;
   const netoPagarVef = sueldoPeriodoVef + bonoAlimentacionVef - totalDeducciones;
-
-  // 5. Garantía de Prestaciones (Informativo)
-  // 15 días por trimestre -> aprox 5 días por mes -> 2.5 días por quincena (Estimado para mostrar acumulación)
-  const garantiaQuincenal = salarioDiarioIntegral * 2.5;
 
   return {
     anios_servicio: aniosServicio,
@@ -90,18 +161,14 @@ export const calculatePayroll = (
     alicuota_vacaciones_diaria: alicuotaBonoVacacionalDiaria,
     dias_utilidades_anuales: diasUtilidades,
     dias_vacaciones_anuales: diasBonoVacacional,
-    
     sueldo_base_mensual: sueldoMensualVef,
     sueldo_periodo: sueldoPeriodoVef,
-    
     bono_alimentacion_vef: bonoAlimentacionVef,
     deduccion_ivss: deduccionIvss,
     deduccion_faov: deduccionFaov,
     deduccion_spf: deduccionSpf,
     neto_pagar_vef: netoPagarVef,
-    total_deducciones: totalDeducciones,
-    
-    garantia_prestaciones_estimada: garantiaQuincenal
+    total_deducciones: totalDeducciones
   };
 };
 

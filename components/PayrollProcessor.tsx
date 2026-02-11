@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase.ts';
 import { Empleado, ConfigGlobal, Asistencia } from '../types.ts';
-import { calculatePayroll, fetchBcvRate, calculateWorkedHours, isWeekend } from '../services/payrollService.ts';
+import { calculatePayroll, fetchBcvRate, processAttendanceRecords } from '../services/payrollService.ts';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 
@@ -81,41 +81,33 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     const fechaDesde = `${startDay.toString().padStart(2, '0')}/${(selectedMonth + 1).toString().padStart(2, '0')}/${selectedYear}`;
     const fechaHasta = `${endDay.toString().padStart(2, '0')}/${(selectedMonth + 1).toString().padStart(2, '0')}/${selectedYear}`;
 
-    // Lógica de horas trabajadas (si hay asistencia)
-    const empAsistencias = attendances.filter(a => a.empleado_id === emp.id && a.estado === 'presente');
-    let totalHorasRegulares = 0;
-    let totalHorasExtras = 0;
-    let diasDescansoTrabajados = 0;
+    // Lógica detallada de horas trabajadas usando processAttendanceRecords
+    const empAsistencias = attendances.filter(a => a.empleado_id === emp.id);
+    const hoursData = processAttendanceRecords(empAsistencias);
+    const usaCalculoAsistencia = hoursData.diasTrabajados > 0;
 
-    empAsistencias.forEach(att => {
-        const horasDia = calculateWorkedHours(att.hora_entrada, att.hora_salida);
-        const esFinDeSemana = isWeekend(att.fecha);
-        if (esFinDeSemana) {
-            diasDescansoTrabajados += 1;
-            totalHorasRegulares += horasDia;
-        } else {
-            if (horasDia > 8) {
-                totalHorasRegulares += 8;
-                totalHorasExtras += (horasDia - 8);
-            } else {
-                totalHorasRegulares += horasDia;
-            }
-        }
-    });
-
+    // Factores de Pago (LOTTT)
     const salarioHoraBs = calc.salario_diario_normal / 8;
-    const montoHorasRegulares = totalHorasRegulares * salarioHoraBs;
-    const montoHorasExtras = totalHorasExtras * (salarioHoraBs * 1.5);
-    const montoDiasDescanso = diasDescansoTrabajados * (calc.salario_diario_normal * 1.5);
+    const montoHorasNormales = hoursData.totalNormal * salarioHoraBs;
+    
+    // Horas Extras (1.5x)
+    const montoExtrasDiurnas = hoursData.totalExtraDiurna * (salarioHoraBs * 1.5);
+    const montoExtrasNocturnas = hoursData.totalExtraNocturna * (salarioHoraBs * 1.5); // Nota: Podría aplicar bono nocturno extra, dejamos 1.5x por defecto
+    
+    // Días Descanso (Se pagan las horas trabajadas al 1.5x)
+    const montoDescanso = hoursData.totalDescanso * (salarioHoraBs * 1.5);
 
-    const usaCalculoAsistencia = empAsistencias.length > 0;
+    // Calculamos el total de asignaciones basado en asistencia si existe
+    let totalAsignacionesCalculadas = montoHorasNormales + montoExtrasDiurnas + montoExtrasNocturnas + montoDescanso;
     
-    // Si hay asistencia, usamos los cálculos reales, si no, usamos el estándar de la quincena (15 días)
-    const baseAsignaciones = usaCalculoAsistencia 
-        ? (montoHorasRegulares + montoHorasExtras + montoDiasDescanso) 
-        : calc.sueldo_periodo;
+    // Si no hay asistencia registrada pero es un empleado activo, usamos el sueldo base del periodo
+    if (!usaCalculoAsistencia) {
+        totalAsignacionesCalculadas = calc.sueldo_periodo;
+    }
     
-    const diasPagados = usaCalculoAsistencia ? empAsistencias.length : (periodo === 'Q1' ? 15 : (endDay - 15));
+    // Recalcular el Neto a Pagar Final considerando lo real vs lo estimado
+    // (Nota: Las deducciones legales suelen basarse en el salario normal, mantenemos calc.total_deducciones del servicio)
+    const netoFinal = totalAsignacionesCalculadas + calc.bono_alimentacion_vef - calc.total_deducciones;
 
     // Generación PDF
     const doc = new jsPDF();
@@ -144,19 +136,16 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     doc.setFontSize(9);
     doc.setFont("courier", "normal");
     
-    // Bajamos 3 líneas más aprox. para que no choque con el logo (y=50)
     let y = 50;
     
-    // Alineación derecha usando pageWidth - margen
     doc.text(`EMPRESA: ${emp.sucursales?.nombre_id || 'FarmaNomina C.A.'}`, 15, y);
     doc.text(`RIF: ${emp.sucursales?.rif || 'J-12345678-9'}`, pageWidth - 15, y, { align: "right" });
     y += 5;
     
     const direccion = emp.sucursales?.direccion || 'Sede Principal';
-    // Dividir texto si es muy largo para no salir del margen
     const splitDireccion = doc.splitTextToSize(`DIR: ${direccion}`, pageWidth - 30);
     doc.text(splitDireccion, 15, y);
-    y += (splitDireccion.length * 5); // Ajustar altura dinámica
+    y += (splitDireccion.length * 5); 
     
     y += 3;
     doc.text("==========================================================================", 15, y);
@@ -177,9 +166,9 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     doc.text(`Período: ${fechaDesde} al ${fechaHasta} (${periodo})`, pageWidth - 15, y, { align: "right" });
     y += 6;
     
-    // SALARIO INTEGRAL (Base de cálculo)
+    // SALARIO INTEGRAL
     doc.setFillColor(245, 245, 245);
-    doc.rect(15, y, pageWidth - 30, 20, 'F'); // Aumentamos altura de la caja
+    doc.rect(15, y, pageWidth - 30, 20, 'F'); 
     y += 4;
     doc.setFont("courier", "bold");
     doc.setFontSize(9);
@@ -188,7 +177,6 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     
     doc.setFont("courier", "normal");
     doc.setFontSize(8);
-    // Distribución horizontal controlada
     doc.text(`Salario Diario: Bs. ${calc.salario_diario_normal.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 20, y);
     doc.text(`+ Alic. Utilidades: Bs. ${calc.alicuota_utilidades_diaria.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 80, y);
     doc.text(`+ Alic. Vacaciones: Bs. ${calc.alicuota_vacaciones_diaria.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 140, y);
@@ -196,7 +184,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     
     doc.setFont("courier", "bold");
     doc.text(`= SALARIO INTEGRAL DIARIO: Bs. ${calc.salario_diario_integral.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 20, y);
-    y += 10; // Salir de la caja
+    y += 10; 
     
     // Prestaciones Acumuladas
     doc.setFontSize(8);
@@ -211,30 +199,35 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     // Tabla Conceptos
     y += 5;
     doc.setFont("courier", "bold");
-    doc.text("CONCEPTOS", 15, y);
+    doc.text("CONCEPTOS (Horas/Días)", 15, y);
     doc.text("ASIGNACIONES", 145, y, { align: "right" });
-    doc.text("DEDUCCIONES", 195, y, { align: "right" }); // Alineado al margen derecho (210-15=195)
+    doc.text("DEDUCCIONES", 195, y, { align: "right" }); 
     doc.setFont("courier", "normal");
     y += 4;
     doc.text("--------------------------------------------------------------------------", 15, y);
     y += 5;
 
     const addRow = (concepto: string, asignacion: number | null, deduccion: number | null) => {
-        // Truncar concepto si es muy largo
         const conceptoLimpio = concepto.length > 45 ? concepto.substring(0, 42) + '...' : concepto;
         doc.text(conceptoLimpio, 15, y);
-        
         if (asignacion !== null) doc.text(`${asignacion.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 145, y, { align: "right" });
         if (deduccion !== null) doc.text(`${deduccion.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 195, y, { align: "right" });
         y += 5;
     };
 
     if (usaCalculoAsistencia) {
-        addRow(`Sueldo Normal (${totalHorasRegulares.toFixed(1)} hrs)`, montoHorasRegulares, null);
-        if (totalHorasExtras > 0) addRow(`Horas Extras (${totalHorasExtras.toFixed(1)} hrs)`, montoHorasExtras, null);
-        if (diasDescansoTrabajados > 0) addRow(`Días Descanso (${diasDescansoTrabajados})`, montoDiasDescanso, null);
+        addRow(`Horas Normales (${hoursData.totalNormal.toFixed(1)} hrs)`, montoHorasNormales, null);
+        if (hoursData.totalExtraDiurna > 0) {
+            addRow(`H. Extras Diurnas (${hoursData.totalExtraDiurna.toFixed(1)} hrs)`, montoExtrasDiurnas, null);
+        }
+        if (hoursData.totalExtraNocturna > 0) {
+            addRow(`H. Extras Nocturnas (${hoursData.totalExtraNocturna.toFixed(1)} hrs)`, montoExtrasNocturnas, null);
+        }
+        if (hoursData.totalDescanso > 0) {
+            addRow(`Días Descanso/Feriados (${hoursData.totalDescanso.toFixed(1)} hrs)`, montoDescanso, null);
+        }
     } else {
-        const diasStr = periodo === 'Q1' ? '15 Días' : `${diasPagados} Días`;
+        const diasStr = periodo === 'Q1' ? '15 Días' : '15 Días';
         addRow(`Sueldo Básico Quincenal (${diasStr})`, calc.sueldo_periodo, null);
     }
 
@@ -250,10 +243,10 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     // Totales
     doc.setFont("courier", "bold");
     doc.text("TOTAL A PAGAR:", 15, y);
-    doc.text(`${calc.neto_pagar_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 145, y, { align: "right" });
+    doc.text(`${netoFinal.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 145, y, { align: "right" });
     
     y += 8;
-    // Cestaticket (Lógica visual: Solo si > 0)
+    // Cestaticket
     if (calc.bono_alimentacion_vef > 0) {
         doc.setFontSize(8);
         doc.text("(+) Cestaticket Socialista (No Salarial):", 15, y);
@@ -289,7 +282,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
            <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
              <span>💰</span> Procesar Nómina
            </h3>
-           <p className="text-sm text-slate-500">Cálculo Quincenal LOTTT</p>
+           <p className="text-sm text-slate-500">Cálculo Quincenal LOTTT (Desglose Horas Extras)</p>
         </div>
 
         <div className="flex flex-wrap gap-4 items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
@@ -347,7 +340,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
         {loadingData ? (
             <div className="text-center py-20">
                <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent animate-spin rounded-full mx-auto mb-4"></div>
-               <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Calculando deducciones y alícuotas...</span>
+               <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Analizando horas extras y deducciones...</span>
             </div>
         ) : (
             <div className="overflow-x-auto">
@@ -355,8 +348,8 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
                 <thead className="bg-[#F8F9FB] text-slate-400 uppercase text-[10px] font-black tracking-[0.1em] border-b border-slate-100">
                 <tr>
                     <th className="px-6 py-4">Empleado</th>
-                    <th className="px-6 py-4 text-center">Salario Integral (Base)</th>
-                    <th className="px-6 py-4 text-right">Devengado Quincena</th>
+                    <th className="px-6 py-4 text-center">Horas Registradas</th>
+                    <th className="px-6 py-4 text-right">Devengado (Est.)</th>
                     <th className="px-6 py-4 text-right">Deducciones</th>
                     <th className="px-6 py-4 text-right text-emerald-600">Neto a Pagar</th>
                     <th className="px-6 py-4 text-center">Recibo</th>
@@ -365,9 +358,24 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
                 <tbody className="divide-y divide-slate-50">
                 {employees.map(emp => {
                     if (!config) return null;
-                    // Calcular para la quincena seleccionada (aprox 15 dias)
-                    const diasCalculo = periodo === 'Q1' ? 15 : 15; 
+                    const diasCalculo = 15; 
                     const calc = calculatePayroll(emp, config, diasCalculo, periodo);
+                    
+                    // Calcular desglose de horas para visualización
+                    const empAsistencias = attendances.filter(a => a.empleado_id === emp.id);
+                    const hoursData = processAttendanceRecords(empAsistencias);
+                    
+                    // Cálculo rápido de Neto (similar al PDF)
+                    const salarioHoraBs = calc.salario_diario_normal / 8;
+                    let totalAsignaciones = calc.sueldo_periodo;
+                    
+                    if (hoursData.diasTrabajados > 0) {
+                        totalAsignaciones = (hoursData.totalNormal * salarioHoraBs) + 
+                                            (hoursData.totalExtraDiurna * salarioHoraBs * 1.5) +
+                                            (hoursData.totalExtraNocturna * salarioHoraBs * 1.5) +
+                                            (hoursData.totalDescanso * salarioHoraBs * 1.5);
+                    }
+                    const netoEstimado = totalAsignaciones + calc.bono_alimentacion_vef - calc.total_deducciones;
 
                     return (
                     <tr key={emp.id} className="hover:bg-slate-50 transition-colors group">
@@ -376,18 +384,32 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
                            <div className="text-[10px] text-slate-400 font-bold uppercase">{emp.cargo}</div>
                         </td>
                         <td className="px-6 py-4 text-center">
-                           <div className="text-xs font-bold text-slate-600">Bs. {calc.salario_diario_integral.toLocaleString('es-VE', {minimumFractionDigits: 2})}</div>
-                           <div className="text-[9px] text-slate-400">Diario Integral</div>
+                           <div className="flex flex-col gap-1 items-center">
+                              {hoursData.diasTrabajados > 0 ? (
+                                  <>
+                                    <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
+                                        Norm: {hoursData.totalNormal.toFixed(1)}h
+                                    </span>
+                                    {(hoursData.totalExtraDiurna > 0 || hoursData.totalExtraNocturna > 0) && (
+                                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100">
+                                            Ext: {(hoursData.totalExtraDiurna + hoursData.totalExtraNocturna).toFixed(1)}h
+                                        </span>
+                                    )}
+                                  </>
+                              ) : (
+                                  <span className="text-[10px] text-slate-400 italic">Sin asistencia</span>
+                              )}
+                           </div>
                         </td>
                         <td className="px-6 py-4 text-right font-mono font-medium text-slate-700">
-                           Bs. {calc.sueldo_periodo.toLocaleString('es-VE', {minimumFractionDigits: 2})}
+                           Bs. {totalAsignaciones.toLocaleString('es-VE', {minimumFractionDigits: 2})}
                         </td>
                         <td className="px-6 py-4 text-right font-mono text-rose-500 text-xs">
                            - {calc.total_deducciones.toLocaleString('es-VE', {minimumFractionDigits: 2})}
                         </td>
                         <td className="px-6 py-4 text-right">
                            <div className="font-black text-emerald-600 text-base">
-                             Bs. {calc.neto_pagar_vef.toLocaleString('es-VE', {minimumFractionDigits: 2})}
+                             Bs. {netoEstimado.toLocaleString('es-VE', {minimumFractionDigits: 2})}
                            </div>
                            {periodo === 'Q2' && <div className="text-[9px] text-emerald-400 font-bold uppercase tracking-tight">+ Cestaticket</div>}
                         </td>
@@ -395,7 +417,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
                         <button 
                             onClick={() => generatePDF(emp, calc)}
                             className="bg-white border border-slate-200 hover:border-emerald-400 hover:text-emerald-600 text-slate-400 p-2 rounded-xl transition-all shadow-sm active:scale-95"
-                            title="Descargar Recibo Legal"
+                            title="Descargar Recibo Detallado"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
                         </button>
