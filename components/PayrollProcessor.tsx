@@ -98,7 +98,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     const montoDescanso = hoursData.totalDescanso * (salarioHoraBs * 1.5);
 
     // Bono Nocturno (30% sobre la hora normal, Art. 117 LOTTT)
-    // Se aplica a TODAS las horas trabajadas de noche (Mixto o Nocturno puro)
+    // Se aplica a TODAS las horas trabajadas de noche o jornada completa si > 4h noche
     const montoBonoNocturno = hoursData.totalNightHours * (salarioHoraBs * 0.30);
 
     // Calculamos el total de asignaciones basado en asistencia si existe
@@ -230,7 +230,9 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
         
         // Bono Nocturno (30%)
         if (montoBonoNocturno > 0) {
-            addRow(`Bono Nocturno 30% (${hoursData.totalNightHours.toFixed(1)} hrs noche)`, montoBonoNocturno, null);
+            // Etiqueta descriptiva para indicar si se consideró Jornada Nocturna completa
+            const etiqueta = "Bono Nocturno / Jor. Nocturna (30%)";
+            addRow(`${etiqueta} (${hoursData.totalNightHours.toFixed(1)} hrs)`, montoBonoNocturno, null);
         }
 
         if (hoursData.totalDescanso > 0) {

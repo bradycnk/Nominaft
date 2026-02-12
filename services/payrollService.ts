@@ -18,48 +18,51 @@ export const timeToDecimal = (timeStr: string): number => {
  * Analiza un turno individual para desglosar tipos de horas.
  * Regla: Primeras 8h son normales. El resto son extras.
  * Extras > 19:00 (7PM) son Nocturnas.
- * nightHours: Total de horas físicas trabajadas después de las 19:00 (para Bono Nocturno).
+ * nightHours: Total de horas para Bono Nocturno. Si la jornada tiene > 4 horas nocturnas reales, toda la jornada se considera nocturna (LOTTT).
  */
 export const calculateDetailedShift = (entrada: string, salida: string, fecha: string) => {
   if (!entrada || !salida) return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: 0, nightHours: 0 };
 
   const start = timeToDecimal(entrada);
-  const end = timeToDecimal(salida);
+  let end = timeToDecimal(salida);
   
-  // Manejo de turno que cruza medianoche (simple)
-  let duration = end - start;
-  if (duration < 0) duration += 24; 
+  // Manejo de turno que cruza medianoche (Ej: 17:00 a 02:00 -> 17 a 26)
+  if (end < start) end += 24; 
 
+  const duration = end - start;
   const dateObj = new Date(fecha);
   const day = dateObj.getDay(); // 0 Dom, 6 Sab
   const isWeekend = day === 0 || day === 6;
 
-  // Cálculo de horas nocturnas (Bono Nocturno 30%)
-  // Cualquier hora trabajada después de las 19:00 (7 PM)
-  const nightLimit = 19.0;
-  let nightHours = 0;
+  // --- CÁLCULO DE HORAS NOCTURNAS REALES (19:00 - 05:00) ---
+  // Definimos los bloques nocturnos en la línea de tiempo lineal (0 a 29 horas)
+  // Bloque 1: Madrugada del mismo día (00:00 - 05:00) -> [0, 5]
+  // Bloque 2: Noche del mismo día (19:00 - 24:00) -> [19, 24]
+  // Bloque 3: Madrugada del día siguiente (24:00 - 29:00) -> [24, 29]
   
-  // Ajustamos tiempos para cálculo lineal si cruza medianoche
-  let effectiveEnd = end;
-  if (end < start) effectiveEnd += 24;
-  
-  // Si el turno termina después de las 19:00
-  if (effectiveEnd > nightLimit) {
-      // Si empezó después de las 19:00, todo es nocturno
-      if (start >= nightLimit) {
-          nightHours = duration;
-      } else {
-          // Empezó antes de las 19:00 y terminó después
-          nightHours = effectiveEnd - nightLimit;
-      }
+  const overlap = (s1: number, e1: number, s2: number, e2: number) => {
+    return Math.max(0, Math.min(e1, e2) - Math.max(s1, s2));
+  };
+
+  const nightPart1 = overlap(start, end, 0, 5);   // Si entra de madrugada (ej: 4am)
+  const nightPart2 = overlap(start, end, 19, 24); // Si trabaja de noche (ej: 7pm a 12am)
+  const nightPart3 = overlap(start, end, 24, 29); // Si cruza medianoche (ej: 12am a 2am)
+
+  const realNightHours = nightPart1 + nightPart2 + nightPart3;
+
+  // --- REGLA JORNADA NOCTURNA (ART 173 LOTTT) ---
+  // Si se laboran 4 o más horas en periodo nocturno, se considera toda la jornada como nocturna.
+  let paidNightHours = realNightHours;
+  if (realNightHours > 4) {
+    paidNightHours = duration; // Se paga el bono sobre TODAS las horas trabajadas
   }
 
-  // Si es fin de semana, TODO cuenta como horas de descanso
+  // Si es fin de semana, TODO cuenta como horas de descanso para efectos de cálculo base
   if (isWeekend) {
-    return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: duration, nightHours };
+    return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: duration, nightHours: paidNightHours };
   }
 
-  // Jornada Regular (Lunes a Viernes)
+  // --- DESGLOSE NORMAL VS EXTRA ---
   let normal = 0;
   let extraDiurna = 0;
   let extraNocturna = 0;
@@ -70,34 +73,29 @@ export const calculateDetailedShift = (entrada: string, salida: string, fecha: s
     normal = 8;
     const extraDuration = duration - 8;
     
-    // Calcular a qué hora empezaron las extras
-    let extraStartTime = start + 8;
-    if (extraStartTime >= 24) extraStartTime -= 24;
+    // Clasificación aproximada de extras (para recargo 1.5x)
+    // Usamos el límite de 19:00 para dividir extras diurnas de nocturnas
+    const nightLimit = 19.0;
+    
+    // Asumimos que las extras ocurren al final del turno
+    // Calculamos el inicio de las extras
+    const extraStartTime = start + 8; 
+    const extraEndTime = end;
 
-    let extraEndTime = end;
+    // Calculamos cuántas de esas horas extras cayeron en periodo nocturno
+    // (Simplificado: > 19:00 o < 05:00)
+    // Reutilizamos lógica de overlap para el bloque extra
+    const extraNight1 = overlap(extraStartTime, extraEndTime, 0, 5);
+    const extraNight2 = overlap(extraStartTime, extraEndTime, 19, 24);
+    const extraNight3 = overlap(extraStartTime, extraEndTime, 24, 29);
     
-    // Analizamos el bloque de horas extras para clasificarlas (Diurna vs Nocturna)
-    // Esto es para el pago de H.E (1.5x) vs H.E.N (1.5x + recargo si aplica, aquí simplificado)
-    
-    // Caso 1: Todo el bloque extra es antes de las 7pm
-    if (extraEndTime <= nightLimit && extraEndTime > start) {
-      extraDiurna = extraDuration;
-    }
-    // Caso 2: Todo el bloque extra es después de las 7pm
-    else if (extraStartTime >= nightLimit) {
-      extraNocturna = extraDuration;
-    }
-    // Caso 3: Mixto (empiezan extras de día y terminan de noche)
-    else {
-      // Asumiendo que start < nightLimit, pero extraStartTime podría ser > nightLimit
-      // Simplificación lógica:
-      const dayPart = Math.max(0, nightLimit - extraStartTime);
-      extraDiurna = dayPart;
-      extraNocturna = extraDuration - dayPart;
-    }
+    const extraNightTotal = extraNight1 + extraNight2 + extraNight3;
+
+    extraNocturna = extraNightTotal;
+    extraDiurna = Math.max(0, extraDuration - extraNocturna);
   }
 
-  return { normal, extraDiurna, extraNocturna, descanso: 0, nightHours };
+  return { normal, extraDiurna, extraNocturna, descanso: 0, nightHours: paidNightHours };
 };
 
 /**
