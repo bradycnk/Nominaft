@@ -18,9 +18,10 @@ export const timeToDecimal = (timeStr: string): number => {
  * Analiza un turno individual para desglosar tipos de horas.
  * Regla: Primeras 8h son normales. El resto son extras.
  * Extras > 19:00 (7PM) son Nocturnas.
+ * nightHours: Total de horas físicas trabajadas después de las 19:00 (para Bono Nocturno).
  */
 export const calculateDetailedShift = (entrada: string, salida: string, fecha: string) => {
-  if (!entrada || !salida) return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: 0 };
+  if (!entrada || !salida) return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: 0, nightHours: 0 };
 
   const start = timeToDecimal(entrada);
   const end = timeToDecimal(salida);
@@ -30,13 +31,32 @@ export const calculateDetailedShift = (entrada: string, salida: string, fecha: s
   if (duration < 0) duration += 24; 
 
   const dateObj = new Date(fecha);
-  // Ajuste de zona horaria simple para evitar problemas de día
   const day = dateObj.getDay(); // 0 Dom, 6 Sab
   const isWeekend = day === 0 || day === 6;
 
-  // Si es fin de semana, TODO cuenta como horas de descanso (generalmente pagadas al 1.5x completo)
+  // Cálculo de horas nocturnas (Bono Nocturno 30%)
+  // Cualquier hora trabajada después de las 19:00 (7 PM)
+  const nightLimit = 19.0;
+  let nightHours = 0;
+  
+  // Ajustamos tiempos para cálculo lineal si cruza medianoche
+  let effectiveEnd = end;
+  if (end < start) effectiveEnd += 24;
+  
+  // Si el turno termina después de las 19:00
+  if (effectiveEnd > nightLimit) {
+      // Si empezó después de las 19:00, todo es nocturno
+      if (start >= nightLimit) {
+          nightHours = duration;
+      } else {
+          // Empezó antes de las 19:00 y terminó después
+          nightHours = effectiveEnd - nightLimit;
+      }
+  }
+
+  // Si es fin de semana, TODO cuenta como horas de descanso
   if (isWeekend) {
-    return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: duration };
+    return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: duration, nightHours };
   }
 
   // Jornada Regular (Lunes a Viernes)
@@ -51,32 +71,33 @@ export const calculateDetailedShift = (entrada: string, salida: string, fecha: s
     const extraDuration = duration - 8;
     
     // Calcular a qué hora empezaron las extras
-    // Si entró a las 8am (8.0), las extras empiezan a las 4pm (16.0)
     let extraStartTime = start + 8;
     if (extraStartTime >= 24) extraStartTime -= 24;
 
     let extraEndTime = end;
     
-    // Definir límite nocturno (19:00 = 7 PM)
-    const nightLimit = 19.0;
-
-    // Analizamos el bloque de horas extras
-    // Caso 1: Todo el bloque extra es antes de las 7pm (Ej: 16:00 a 18:00)
-    if (extraEndTime <= nightLimit) {
+    // Analizamos el bloque de horas extras para clasificarlas (Diurna vs Nocturna)
+    // Esto es para el pago de H.E (1.5x) vs H.E.N (1.5x + recargo si aplica, aquí simplificado)
+    
+    // Caso 1: Todo el bloque extra es antes de las 7pm
+    if (extraEndTime <= nightLimit && extraEndTime > start) {
       extraDiurna = extraDuration;
     }
-    // Caso 2: Todo el bloque extra es después de las 7pm (Ej: 20:00 a 22:00)
+    // Caso 2: Todo el bloque extra es después de las 7pm
     else if (extraStartTime >= nightLimit) {
       extraNocturna = extraDuration;
     }
-    // Caso 3: Mixto (Ej: 18:00 a 20:00 -> 1h diurna, 1h nocturna)
+    // Caso 3: Mixto (empiezan extras de día y terminan de noche)
     else {
-      extraDiurna = nightLimit - extraStartTime;
-      extraNocturna = extraEndTime - nightLimit;
+      // Asumiendo que start < nightLimit, pero extraStartTime podría ser > nightLimit
+      // Simplificación lógica:
+      const dayPart = Math.max(0, nightLimit - extraStartTime);
+      extraDiurna = dayPart;
+      extraNocturna = extraDuration - dayPart;
     }
   }
 
-  return { normal, extraDiurna, extraNocturna, descanso: 0 };
+  return { normal, extraDiurna, extraNocturna, descanso: 0, nightHours };
 };
 
 /**
@@ -87,6 +108,7 @@ export const processAttendanceRecords = (asistencias: Asistencia[]) => {
   let totalExtraDiurna = 0;
   let totalExtraNocturna = 0;
   let totalDescanso = 0;
+  let totalNightHours = 0; // Para bono nocturno
   let diasTrabajados = 0;
 
   asistencias.forEach(att => {
@@ -96,11 +118,12 @@ export const processAttendanceRecords = (asistencias: Asistencia[]) => {
       totalExtraDiurna += breakdown.extraDiurna;
       totalExtraNocturna += breakdown.extraNocturna;
       totalDescanso += breakdown.descanso;
+      totalNightHours += breakdown.nightHours;
       diasTrabajados++;
     }
   });
 
-  return { totalNormal, totalExtraDiurna, totalExtraNocturna, totalDescanso, diasTrabajados };
+  return { totalNormal, totalExtraDiurna, totalExtraNocturna, totalDescanso, totalNightHours, diasTrabajados };
 };
 
 export const calculateSeniorityYears = (fechaIngreso: string): number => {

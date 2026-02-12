@@ -92,21 +92,23 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     
     // Horas Extras (1.5x)
     const montoExtrasDiurnas = hoursData.totalExtraDiurna * (salarioHoraBs * 1.5);
-    const montoExtrasNocturnas = hoursData.totalExtraNocturna * (salarioHoraBs * 1.5); // Nota: Podría aplicar bono nocturno extra, dejamos 1.5x por defecto
+    const montoExtrasNocturnas = hoursData.totalExtraNocturna * (salarioHoraBs * 1.5); 
     
     // Días Descanso (Se pagan las horas trabajadas al 1.5x)
     const montoDescanso = hoursData.totalDescanso * (salarioHoraBs * 1.5);
 
+    // Bono Nocturno (30% sobre la hora normal, Art. 117 LOTTT)
+    // Se aplica a TODAS las horas trabajadas de noche (Mixto o Nocturno puro)
+    const montoBonoNocturno = hoursData.totalNightHours * (salarioHoraBs * 0.30);
+
     // Calculamos el total de asignaciones basado en asistencia si existe
-    let totalAsignacionesCalculadas = montoHorasNormales + montoExtrasDiurnas + montoExtrasNocturnas + montoDescanso;
+    let totalAsignacionesCalculadas = montoHorasNormales + montoExtrasDiurnas + montoExtrasNocturnas + montoDescanso + montoBonoNocturno;
     
     // Si no hay asistencia registrada pero es un empleado activo, usamos el sueldo base del periodo
     if (!usaCalculoAsistencia) {
         totalAsignacionesCalculadas = calc.sueldo_periodo;
     }
     
-    // Recalcular el Neto a Pagar Final considerando lo real vs lo estimado
-    // (Nota: Las deducciones legales suelen basarse en el salario normal, mantenemos calc.total_deducciones del servicio)
     const netoFinal = totalAsignacionesCalculadas + calc.bono_alimentacion_vef - calc.total_deducciones;
 
     // Generación PDF
@@ -199,7 +201,7 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     // Tabla Conceptos
     y += 5;
     doc.setFont("courier", "bold");
-    doc.text("CONCEPTOS (Horas/Días)", 15, y);
+    doc.text("CONCEPTOS (Días/Horas)", 15, y);
     doc.text("ASIGNACIONES", 145, y, { align: "right" });
     doc.text("DEDUCCIONES", 195, y, { align: "right" }); 
     doc.setFont("courier", "normal");
@@ -216,13 +218,21 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
     };
 
     if (usaCalculoAsistencia) {
-        addRow(`Horas Normales (${hoursData.totalNormal.toFixed(1)} hrs)`, montoHorasNormales, null);
+        // Mostrar días laborados en el concepto de Sueldo Normal
+        addRow(`Sueldo Normal (${hoursData.diasTrabajados} Días / ${hoursData.totalNormal.toFixed(1)} hrs)`, montoHorasNormales, null);
+        
         if (hoursData.totalExtraDiurna > 0) {
             addRow(`H. Extras Diurnas (${hoursData.totalExtraDiurna.toFixed(1)} hrs)`, montoExtrasDiurnas, null);
         }
         if (hoursData.totalExtraNocturna > 0) {
             addRow(`H. Extras Nocturnas (${hoursData.totalExtraNocturna.toFixed(1)} hrs)`, montoExtrasNocturnas, null);
         }
+        
+        // Bono Nocturno (30%)
+        if (montoBonoNocturno > 0) {
+            addRow(`Bono Nocturno 30% (${hoursData.totalNightHours.toFixed(1)} hrs noche)`, montoBonoNocturno, null);
+        }
+
         if (hoursData.totalDescanso > 0) {
             addRow(`Días Descanso/Feriados (${hoursData.totalDescanso.toFixed(1)} hrs)`, montoDescanso, null);
         }
@@ -367,13 +377,16 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
                     
                     // Cálculo rápido de Neto (similar al PDF)
                     const salarioHoraBs = calc.salario_diario_normal / 8;
+                    const bonoNocturno = hoursData.totalNightHours * salarioHoraBs * 0.30;
+
                     let totalAsignaciones = calc.sueldo_periodo;
                     
                     if (hoursData.diasTrabajados > 0) {
                         totalAsignaciones = (hoursData.totalNormal * salarioHoraBs) + 
                                             (hoursData.totalExtraDiurna * salarioHoraBs * 1.5) +
                                             (hoursData.totalExtraNocturna * salarioHoraBs * 1.5) +
-                                            (hoursData.totalDescanso * salarioHoraBs * 1.5);
+                                            (hoursData.totalDescanso * salarioHoraBs * 1.5) +
+                                            bonoNocturno;
                     }
                     const netoEstimado = totalAsignaciones + calc.bono_alimentacion_vef - calc.total_deducciones;
 
@@ -393,6 +406,11 @@ const PayrollProcessor: React.FC<{ config: ConfigGlobal | null }> = ({ config })
                                     {(hoursData.totalExtraDiurna > 0 || hoursData.totalExtraNocturna > 0) && (
                                         <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100">
                                             Ext: {(hoursData.totalExtraDiurna + hoursData.totalExtraNocturna).toFixed(1)}h
+                                        </span>
+                                    )}
+                                    {hoursData.totalNightHours > 0 && (
+                                        <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                                            B.Noct: {hoursData.totalNightHours.toFixed(1)}h
                                         </span>
                                     )}
                                   </>
