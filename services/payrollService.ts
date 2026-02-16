@@ -1,9 +1,16 @@
 
 import { ConfigGlobal, Empleado, Asistencia } from '../types.ts';
 
-// Constantes Legales
+// Constantes Legales LOTTT
 const TOPE_IVSS_SALARIOS_MINIMOS = 5;
 const TOPE_SPF_SALARIOS_MINIMOS = 10; 
+
+const LIMIT_DIURNAL = 8.0;
+const LIMIT_MIXED = 7.5;
+const LIMIT_NOCTURNAL = 7.0;
+
+const NIGHT_START = 19.0; // 7:00 PM
+const NIGHT_END = 5.0;   // 5:00 AM (Día siguiente)
 
 /**
  * Convierte formato HH:MM a decimal (Ej: "08:30" -> 8.5)
@@ -15,18 +22,23 @@ export const timeToDecimal = (timeStr: string): number => {
 };
 
 /**
- * Analiza un turno individual para desglosar tipos de horas.
- * Regla: Primeras 8h son normales. El resto son extras.
- * Extras > 19:00 (7PM) son Nocturnas.
- * nightHours: Total de horas para Bono Nocturno. Si la jornada tiene > 4 horas nocturnas reales, toda la jornada se considera nocturna (LOTTT).
+ * Determina el solapamiento entre dos rangos de tiempo
+ */
+const getOverlap = (start1: number, end1: number, start2: number, end2: number) => {
+  return Math.max(0, Math.min(end1, end2) - Math.max(start1, start2));
+};
+
+/**
+ * Analiza un turno individual según LOTTT Art. 173 y 117.
+ * detecta automáticamente si es Diurna, Mixta o Nocturna.
  */
 export const calculateDetailedShift = (entrada: string, salida: string, fecha: string) => {
-  if (!entrada || !salida) return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: 0, nightHours: 0 };
+  if (!entrada || !salida) return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: 0, nightHours: 0, shiftType: 'Diurna' };
 
-  const start = timeToDecimal(entrada);
+  let start = timeToDecimal(entrada);
   let end = timeToDecimal(salida);
   
-  // Manejo de turno que cruza medianoche (Ej: 17:00 a 02:00 -> 17 a 26)
+  // Manejo de turno que cruza medianoche (Ej: 22:00 a 06:00)
   if (end < start) end += 24; 
 
   const duration = end - start;
@@ -34,68 +46,62 @@ export const calculateDetailedShift = (entrada: string, salida: string, fecha: s
   const day = dateObj.getDay(); // 0 Dom, 6 Sab
   const isWeekend = day === 0 || day === 6;
 
-  // --- CÁLCULO DE HORAS NOCTURNAS REALES (19:00 - 05:00) ---
-  // Definimos los bloques nocturnos en la línea de tiempo lineal (0 a 29 horas)
-  // Bloque 1: Madrugada del mismo día (00:00 - 05:00) -> [0, 5]
-  // Bloque 2: Noche del mismo día (19:00 - 24:00) -> [19, 24]
-  // Bloque 3: Madrugada del día siguiente (24:00 - 29:00) -> [24, 29]
-  
-  const overlap = (s1: number, e1: number, s2: number, e2: number) => {
-    return Math.max(0, Math.min(e1, e2) - Math.max(s1, s2));
-  };
+  // 1. Calcular horas físicas nocturnas reales (entre 19:00 y 05:00)
+  // Bloque A: 19:00 a 24:00 (Mismo día)
+  const nightPhys1 = getOverlap(start, end, 19, 24);
+  // Bloque B: 24:00 a 29:00 (00:00 a 05:00 día siguiente)
+  const nightPhys2 = getOverlap(start, end, 24, 29);
+  // Bloque C: 00:00 a 05:00 (Mismo día, si entró muy temprano)
+  const nightPhys3 = getOverlap(start, end, 0, 5);
 
-  const nightPart1 = overlap(start, end, 0, 5);   // Si entra de madrugada (ej: 4am)
-  const nightPart2 = overlap(start, end, 19, 24); // Si trabaja de noche (ej: 7pm a 12am)
-  const nightPart3 = overlap(start, end, 24, 29); // Si cruza medianoche (ej: 12am a 2am)
+  const realNightHours = nightPhys1 + nightPhys2 + nightPhys3;
 
-  const realNightHours = nightPart1 + nightPart2 + nightPart3;
-
-  // --- REGLA JORNADA NOCTURNA (ART 173 LOTTT) ---
-  // Si se laboran 4 o más horas en periodo nocturno, se considera toda la jornada como nocturna.
+  // 2. Determinar tipo de Jornada (Art 173 LOTTT)
+  let shiftType: 'Diurna' | 'Mixta' | 'Nocturna' = 'Diurna';
+  let dailyLimit = LIMIT_DIURNAL;
   let paidNightHours = realNightHours;
-  if (realNightHours > 4) {
-    paidNightHours = duration; // Se paga el bono sobre TODAS las horas trabajadas
+
+  if (realNightHours > 4 || (start >= 19 && end <= 29)) {
+    // Si labora más de 4 horas de noche, toda la jornada se considera Nocturna
+    shiftType = 'Nocturna';
+    dailyLimit = LIMIT_NOCTURNAL;
+    paidNightHours = duration; // El bono nocturno aplica a TODA la jornada
+  } else if (realNightHours > 0) {
+    shiftType = 'Mixta';
+    dailyLimit = LIMIT_MIXED;
+    paidNightHours = realNightHours;
   }
 
-  // Si es fin de semana, TODO cuenta como horas de descanso para efectos de cálculo base
+  // 3. Caso especial Domingo/Descanso
   if (isWeekend) {
-    return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: duration, nightHours: paidNightHours };
+    return { normal: 0, extraDiurna: 0, extraNocturna: 0, descanso: duration, nightHours: paidNightHours, shiftType };
   }
 
-  // --- DESGLOSE NORMAL VS EXTRA ---
+  // 4. Desglose Normal vs Extra según el límite de su tipo de jornada
   let normal = 0;
   let extraDiurna = 0;
   let extraNocturna = 0;
 
-  if (duration <= 8) {
+  if (duration <= dailyLimit) {
     normal = duration;
   } else {
-    normal = 8;
-    const extraDuration = duration - 8;
+    normal = dailyLimit;
+    const extraDuration = duration - dailyLimit;
     
-    // Clasificación aproximada de extras (para recargo 1.5x)
-    // Usamos el límite de 19:00 para dividir extras diurnas de nocturnas
-    const nightLimit = 19.0;
-    
-    // Asumimos que las extras ocurren al final del turno
-    // Calculamos el inicio de las extras
-    const extraStartTime = start + 8; 
-    const extraEndTime = end;
+    // Las extras se calculan basándose en cuándo ocurren
+    const extraStart = start + dailyLimit;
+    const extraEnd = end;
 
-    // Calculamos cuántas de esas horas extras cayeron en periodo nocturno
-    // (Simplificado: > 19:00 o < 05:00)
-    // Reutilizamos lógica de overlap para el bloque extra
-    const extraNight1 = overlap(extraStartTime, extraEndTime, 0, 5);
-    const extraNight2 = overlap(extraStartTime, extraEndTime, 19, 24);
-    const extraNight3 = overlap(extraStartTime, extraEndTime, 24, 29);
+    // ¿Cuántas de las extras son de noche?
+    const extraNight1 = getOverlap(extraStart, extraEnd, 19, 24);
+    const extraNight2 = getOverlap(extraStart, extraEnd, 24, 29);
+    const extraNight3 = getOverlap(extraStart, extraEnd, 0, 5);
     
-    const extraNightTotal = extraNight1 + extraNight2 + extraNight3;
-
-    extraNocturna = extraNightTotal;
+    extraNocturna = extraNight1 + extraNight2 + extraNight3;
     extraDiurna = Math.max(0, extraDuration - extraNocturna);
   }
 
-  return { normal, extraDiurna, extraNocturna, descanso: 0, nightHours: paidNightHours };
+  return { normal, extraDiurna, extraNocturna, descanso: 0, nightHours: paidNightHours, shiftType };
 };
 
 /**
@@ -106,7 +112,7 @@ export const processAttendanceRecords = (asistencias: Asistencia[]) => {
   let totalExtraDiurna = 0;
   let totalExtraNocturna = 0;
   let totalDescanso = 0;
-  let totalNightHours = 0; // Para bono nocturno
+  let totalNightHours = 0; 
   let diasTrabajados = 0;
 
   asistencias.forEach(att => {
@@ -142,23 +148,18 @@ export const calculatePayroll = (
   periodo: 'Q1' | 'Q2' = 'Q1'
 ) => {
   const tasa = config.tasa_bcv;
-  
-  // 1. Salario Normal
   const sueldoMensualVef = (empleado.salario_usd * tasa);
   const salarioDiarioNormal = sueldoMensualVef / 30;
   const sueldoPeriodoVef = salarioDiarioNormal * diasTrabajados;
 
-  // 2. Cálculo de Alícuotas para Salario Integral (Art 104 LOTTT)
   const aniosServicio = calculateSeniorityYears(empleado.fecha_ingreso);
   const diasBonoVacacional = Math.min(30, config.dias_bono_vacacional_base + Math.max(0, aniosServicio - 1));
   const diasUtilidades = config.dias_utilidades;
 
   const alicuotaBonoVacacionalDiaria = (salarioDiarioNormal * diasBonoVacacional) / 360;
   const alicuotaUtilidadesDiaria = (salarioDiarioNormal * diasUtilidades) / 360;
-  
   const salarioDiarioIntegral = salarioDiarioNormal + alicuotaBonoVacacionalDiaria + alicuotaUtilidadesDiaria;
 
-  // 3. Deducciones de Ley
   const salarioMinimo = config.salario_minimo_vef;
   const topeIvss = salarioMinimo * TOPE_IVSS_SALARIOS_MINIMOS;
   const baseImponiblePeriodo = Math.min(sueldoPeriodoVef, (topeIvss / 30) * diasTrabajados);
@@ -167,7 +168,6 @@ export const calculatePayroll = (
   const deduccionSpf = baseImponiblePeriodo * 0.005; 
   const deduccionFaov = sueldoPeriodoVef * 0.01; 
 
-  // 4. Cestaticket
   const cestaticketMensualVef = config.cestaticket_usd * tasa;
   const bonoAlimentacionVef = periodo === 'Q2' ? cestaticketMensualVef : 0;
 
@@ -202,20 +202,4 @@ export const fetchBcvRate = async (): Promise<number> => {
     console.error("Error fetching BCV rate:", error);
     return 36.5;
   }
-};
-
-export const calculateWorkedHours = (entrada?: string, salida?: string): number => {
-  if (!entrada || !salida) return 0;
-  const [h1, m1] = entrada.split(':').map(Number);
-  const [h2, m2] = salida.split(':').map(Number);
-  const date1 = new Date(0, 0, 0, h1, m1);
-  const date2 = new Date(0, 0, 0, h2, m2);
-  let diff = (date2.getTime() - date1.getTime()) / 1000 / 60 / 60; 
-  return diff > 0 ? diff : 0;
-};
-
-export const isWeekend = (dateString: string): boolean => {
-  const date = new Date(dateString);
-  const day = date.getDay(); 
-  return day === 0 || day === 6; 
 };
