@@ -1,4 +1,21 @@
 
+export interface ReceiptPrintConfig {
+  includeCestaticket: boolean;
+  includeExtraDiurna: boolean;
+  includeExtraNocturna: boolean;
+  includeBonoNocturno: boolean;
+  includeDescansoAsistencia: boolean;
+  includeDescansoFijo: boolean;
+  diasDescansoFijo: number;
+  includeCustomAmount: boolean;
+  customAmountLabel: string;
+  customAmountValue: number;
+  includeIvss: boolean;
+  includeSpf: boolean;
+  includeFaov: boolean;
+  includeAdelantos: boolean;
+}
+
 export interface ConfigGlobal {
   id: string;
   tasa_bcv: number;
@@ -6,6 +23,7 @@ export interface ConfigGlobal {
   salario_minimo_vef: number;
   dias_utilidades: number;
   dias_bono_vacacional_base: number;
+  receipt_print_config?: Partial<ReceiptPrintConfig> | null;
   updated_at: string;
 }
 
@@ -33,7 +51,8 @@ export interface Empleado {
   cv_url?: string;
   sucursal_id?: string;
   prestaciones_acumuladas_vef?: number;
-  
+  receipt_print_config?: Partial<ReceiptPrintConfig> | null;
+
   // Nuevos campos Legales/Personales
   fecha_nacimiento?: string;
   lugar_nacimiento?: string;
@@ -47,6 +66,9 @@ export interface Empleado {
   contacto_emergencia_nombre?: string;
   contacto_emergencia_telefono?: string;
   tipo_contrato?: string;
+  duracion_contrato_meses?: number;
+  tipo_sangre?: string;
+  alergias?: string;
   departamento?: string;
   tipo_jornada?: string;
   bono_alimentacion_frecuencia?: string;
@@ -87,6 +109,20 @@ export interface Nomina {
   neto_pagar_vef: number;
   pagado: boolean;
   empleados?: Empleado;
+}
+
+export interface Adelanto {
+  id: string;
+  empleado_id: string;
+  monto: number;
+  fecha_solicitud: string;
+  motivo?: string;
+  estado: 'pendiente' | 'aprobado' | 'pagado' | 'rechazado';
+  tipo?: 'adelanto_nomina' | 'prestamo_credito';
+  cuota_quincenal?: number | null;
+  saldo_pendiente?: number | null;
+  ultimo_periodo_descuento?: string | null;
+  created_at?: string;
 }
 
 export interface Asistencia {

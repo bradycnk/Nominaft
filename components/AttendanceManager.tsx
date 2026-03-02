@@ -1,8 +1,79 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase.ts';
 import { Empleado, Asistencia } from '../types.ts';
 import { calculateDetailedShift } from '../services/payrollService.ts';
+
+interface CalendarDayDraft {
+  estado: Asistencia['estado'];
+  hora_entrada: string;
+  hora_salida: string;
+  observaciones: string;
+}
+
+interface HolidayInfo {
+  name: string;
+  detail: string;
+}
+
+const pad2 = (value: number) => String(value).padStart(2, '0');
+const formatDateKey = (date: Date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+
+const getEasterSunday = (year: number) => {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+};
+
+const getVenezuelanHolidays = (year: number): Record<string, HolidayInfo> => {
+  const holidays: Record<string, HolidayInfo> = {};
+
+  const addHoliday = (date: Date, name: string, detail: string) => {
+    holidays[formatDateKey(date)] = { name, detail };
+  };
+
+  // Feriados fijos de uso nacional
+  addHoliday(new Date(year, 0, 1), 'Año Nuevo', 'Celebración del inicio de año.');
+  addHoliday(new Date(year, 3, 19), '19 de Abril', 'Declaración de la Independencia de Venezuela (1810).');
+  addHoliday(new Date(year, 4, 1), 'Día del Trabajador', 'Conmemoración internacional del trabajo.');
+  addHoliday(new Date(year, 5, 24), 'Batalla de Carabobo', 'Conmemoración de la Batalla de Carabobo (1821).');
+  addHoliday(new Date(year, 6, 5), 'Día de la Independencia', 'Firma del Acta de la Independencia (1811).');
+  addHoliday(new Date(year, 6, 24), 'Natalicio de Simón Bolívar', 'Conmemoración del nacimiento del Libertador.');
+  addHoliday(new Date(year, 9, 12), 'Día de la Resistencia Indígena', 'Conmemoración de la resistencia de los pueblos originarios.');
+  addHoliday(new Date(year, 11, 24), 'Nochebuena', 'Asueto navideño.');
+  addHoliday(new Date(year, 11, 25), 'Navidad', 'Celebración de la Navidad.');
+  addHoliday(new Date(year, 11, 31), 'Fin de Año', 'Asueto de cierre de año.');
+
+  // Feriados móviles (basados en Pascua)
+  const easterSunday = getEasterSunday(year);
+  const carnavalMonday = new Date(easterSunday);
+  carnavalMonday.setDate(easterSunday.getDate() - 48);
+  const carnavalTuesday = new Date(easterSunday);
+  carnavalTuesday.setDate(easterSunday.getDate() - 47);
+  const holyThursday = new Date(easterSunday);
+  holyThursday.setDate(easterSunday.getDate() - 3);
+  const holyFriday = new Date(easterSunday);
+  holyFriday.setDate(easterSunday.getDate() - 2);
+
+  addHoliday(carnavalMonday, 'Lunes de Carnaval', 'Inicio del asueto de Carnaval.');
+  addHoliday(carnavalTuesday, 'Martes de Carnaval', 'Cierre del asueto de Carnaval.');
+  addHoliday(holyThursday, 'Jueves Santo', 'Conmemoración de Semana Santa.');
+  addHoliday(holyFriday, 'Viernes Santo', 'Conmemoración de Semana Santa.');
+
+  return holidays;
+};
 
 const AttendanceManager: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'daily' | 'calendar'>('daily');
@@ -21,8 +92,17 @@ const AttendanceManager: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [employeeHistory, setEmployeeHistory] = useState<Asistencia[]>([]);
+  const [selectedDate, setSelectedDate] = useState<string>('');
+  const [dayDraft, setDayDraft] = useState<CalendarDayDraft>({
+    estado: 'presente',
+    hora_entrada: '',
+    hora_salida: '',
+    observaciones: ''
+  });
+  const [savingCalendarDay, setSavingCalendarDay] = useState(false);
 
   const today = new Date().toISOString().split('T')[0];
+  const holidaysByDate = useMemo(() => getVenezuelanHolidays(selectedYear), [selectedYear]);
 
   useEffect(() => {
     fetchInitialData();
@@ -33,6 +113,16 @@ const AttendanceManager: React.FC = () => {
       fetchEmployeeHistory();
     }
   }, [selectedEmployeeId, selectedMonth, selectedYear, activeTab]);
+
+  useEffect(() => {
+    setSelectedDate('');
+    setDayDraft({
+      estado: 'presente',
+      hora_entrada: '',
+      hora_salida: '',
+      observaciones: ''
+    });
+  }, [selectedEmployeeId, selectedMonth, selectedYear]);
 
   const fetchInitialData = async () => {
     setLoading(true);
@@ -79,7 +169,76 @@ const AttendanceManager: React.FC = () => {
       .gte('fecha', startDate)
       .lte('fecha', endDate);
 
-    setEmployeeHistory(data || []);
+    const history = data || [];
+    setEmployeeHistory(history);
+    return history;
+  };
+
+  const getHistoryRecordByDate = (date: string) => {
+    return employeeHistory.find((record) => record.fecha === date);
+  };
+
+  const openDayEditor = (date: string) => {
+    const record = getHistoryRecordByDate(date);
+    setSelectedDate(date);
+    setDayDraft({
+      estado: record?.estado || 'presente',
+      hora_entrada: record?.hora_entrada?.slice(0, 5) || '',
+      hora_salida: record?.hora_salida?.slice(0, 5) || '',
+      observaciones: record?.observaciones || ''
+    });
+  };
+
+  const saveCalendarDay = async () => {
+    if (!selectedEmployeeId || !selectedDate) return;
+
+    const existingRecord = getHistoryRecordByDate(selectedDate);
+    if (existingRecord?.cerrado) {
+      alert("El día seleccionado está cerrado administrativamente. No se puede editar.");
+      return;
+    }
+
+    if (dayDraft.estado === 'presente' && !dayDraft.hora_entrada) {
+      alert("Para estado 'presente' debe indicar hora de entrada.");
+      return;
+    }
+
+    if (dayDraft.hora_salida && !dayDraft.hora_entrada) {
+      alert("No puede guardar hora de salida sin una hora de entrada.");
+      return;
+    }
+
+    setSavingCalendarDay(true);
+    try {
+      const payload = {
+        empleado_id: selectedEmployeeId,
+        fecha: selectedDate,
+        estado: dayDraft.estado,
+        hora_entrada: dayDraft.estado === 'presente' ? (dayDraft.hora_entrada || null) : null,
+        hora_salida: dayDraft.estado === 'presente' ? (dayDraft.hora_salida || null) : null,
+        observaciones: dayDraft.observaciones.trim() || null,
+      };
+
+      const { error } = await supabase
+        .from('asistencias')
+        .upsert(payload, { onConflict: 'empleado_id,fecha' });
+
+      if (error) throw error;
+
+      const refreshedHistory = await fetchEmployeeHistory();
+      if (selectedDate === today) await fetchInitialData();
+      const refreshedRecord = refreshedHistory.find((record) => record.fecha === selectedDate);
+      setDayDraft({
+        estado: refreshedRecord?.estado || 'presente',
+        hora_entrada: refreshedRecord?.hora_entrada?.slice(0, 5) || '',
+        hora_salida: refreshedRecord?.hora_salida?.slice(0, 5) || '',
+        observaciones: refreshedRecord?.observaciones || ''
+      });
+    } catch (err: any) {
+      alert("Error al guardar cambios del día: " + err.message);
+    } finally {
+      setSavingCalendarDay(false);
+    }
   };
 
   const handleTimeChange = (empId: string, field: 'hora_entrada' | 'hora_salida', value: string) => {
@@ -208,6 +367,7 @@ const AttendanceManager: React.FC = () => {
     const date1 = new Date(0, 0, 0, h1, m1);
     const date2 = new Date(0, 0, 0, h2, m2);
     let diff = (date2.getTime() - date1.getTime()) / 1000 / 60 / 60;
+    if (diff < 0) diff += 24;
     return diff > 0 ? diff : 0;
   };
 
@@ -258,7 +418,10 @@ const AttendanceManager: React.FC = () => {
         {days.map(date => {
           const dateStr = date.toISOString().split('T')[0];
           const record = employeeHistory.find(h => h.fecha === dateStr);
+          const holiday = holidaysByDate[dateStr];
+          const isHoliday = !!holiday;
           const isSunday = date.getDay() === 0;
+          const isSelectedDay = selectedDate === dateStr;
 
           // Cálculo detallado usando el servicio compartido
           const details = calculateDetailedShift(
@@ -277,7 +440,10 @@ const AttendanceManager: React.FC = () => {
           let bgColor = 'bg-white';
           let borderColor = 'border-slate-100';
           
-          if (record?.estado === 'presente') {
+          if (isHoliday) {
+            bgColor = 'bg-orange-50';
+            borderColor = 'border-orange-200';
+          } else if (record?.estado === 'presente') {
             bgColor = isSunday ? 'bg-amber-50' : 'bg-emerald-50';
             borderColor = isSunday ? 'border-amber-200' : 'border-emerald-200';
           } else if (record?.estado === 'falta') {
@@ -292,13 +458,27 @@ const AttendanceManager: React.FC = () => {
           }
 
           return (
-            <div key={dateStr} className={`h-28 border rounded-xl p-2 flex flex-col relative transition-all hover:shadow-md ${bgColor} ${borderColor} ${record?.cerrado ? 'opacity-80' : ''}`}>
+            <button
+              key={dateStr}
+              type="button"
+              onClick={() => openDayEditor(dateStr)}
+              className={`h-28 border rounded-xl p-2 flex flex-col relative transition-all hover:shadow-md text-left ${
+                bgColor
+              } ${borderColor} ${record?.cerrado ? 'opacity-80' : ''} ${
+                isSelectedDay ? 'ring-2 ring-emerald-500 ring-offset-2' : ''
+              }`}
+            >
               {/* Header Día */}
               <div className="flex justify-between items-start mb-1">
-                <span className={`text-xs font-bold ${isSunday ? 'text-rose-500' : 'text-slate-700'}`}>
+                <span className={`text-xs font-bold ${isHoliday ? 'text-orange-600' : isSunday ? 'text-rose-500' : 'text-slate-700'}`}>
                   {date.getDate()}
                 </span>
                 <div className="flex gap-1">
+                  {isHoliday && (
+                    <span className="text-[8px] font-black text-orange-700 bg-orange-100 px-1 rounded border border-orange-200">
+                      FERIADO
+                    </span>
+                  )}
                   {record?.cerrado && <span className="text-[9px]" title="Pagado">🔒</span>}
                   {record?.estado === 'falta' && (
                      <span className="text-[8px] font-black text-rose-600 bg-rose-100 px-1 rounded">FALTA</span>
@@ -309,6 +489,11 @@ const AttendanceManager: React.FC = () => {
               {/* Contenido Asistencia */}
               {record?.estado === 'presente' ? (
                 <div className="flex flex-col gap-0.5 mt-auto">
+                    {isHoliday && (
+                      <div className="mb-1 text-[8px] font-black text-orange-700 uppercase truncate" title={holiday?.detail}>
+                        {holiday?.name}
+                      </div>
+                    )}
                     {/* Hora Entrada/Salida */}
                     <div className="text-[9px] text-slate-500 font-mono mb-1">
                         {record.hora_entrada?.slice(0,5)} - {record.hora_salida?.slice(0,5) || '?'}
@@ -347,16 +532,38 @@ const AttendanceManager: React.FC = () => {
                 </div>
               ) : (
                  /* Sin asistencia */
-                 <div className="mt-auto text-center text-[9px] text-slate-300 font-medium uppercase">
-                    - Sin Reg -
+                 <div className="mt-auto text-center">
+                    {isHoliday ? (
+                      <div className="space-y-0.5">
+                        <div className="text-[8px] font-black text-orange-700 uppercase truncate">{holiday?.name}</div>
+                        <div className="text-[8px] text-orange-500 leading-tight" title={holiday?.detail}>
+                          {holiday?.detail}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[9px] text-slate-300 font-medium uppercase">
+                        - Sin Reg -
+                      </div>
+                    )}
                  </div>
               )}
-            </div>
+            </button>
           );
         })}
       </div>
     );
   };
+
+  const selectedHistoryRecord = selectedDate ? getHistoryRecordByDate(selectedDate) : null;
+  const selectedHoliday = selectedDate ? holidaysByDate[selectedDate] : null;
+  const selectedDateLabel = selectedDate
+    ? new Date(`${selectedDate}T00:00:00`).toLocaleDateString('es-VE', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      })
+    : '';
 
   return (
     <div className="bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden">
@@ -546,6 +753,116 @@ const AttendanceManager: React.FC = () => {
 
            {/* Calendario Grid */}
            {renderCalendar()}
+
+           {/* Editor por Día */}
+           <div className="mt-8 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+             {!selectedDate ? (
+               <div className="text-center text-sm text-slate-400 font-semibold">
+                 Seleccione un día del calendario para editar entrada y salida.
+               </div>
+             ) : (
+               <div className="space-y-5">
+                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                   <div>
+                     <h3 className="text-sm font-black uppercase tracking-wide text-slate-800">
+                       Edición de Asistencia del Día
+                     </h3>
+                     <p className="text-xs text-slate-500 font-semibold capitalize">{selectedDateLabel}</p>
+                     {selectedHoliday && (
+                       <div className="mt-2 inline-flex items-start gap-2 px-3 py-2 rounded-xl bg-orange-50 border border-orange-200">
+                         <span className="text-sm">🟠</span>
+                         <div>
+                           <p className="text-[10px] font-black uppercase tracking-wide text-orange-700">
+                             {selectedHoliday.name}
+                           </p>
+                           <p className="text-[11px] font-semibold text-orange-600">
+                             {selectedHoliday.detail}
+                           </p>
+                         </div>
+                       </div>
+                     )}
+                   </div>
+                   {selectedHistoryRecord?.cerrado ? (
+                     <span className="px-3 py-1.5 bg-slate-100 text-slate-500 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                       Día Cerrado / No Editable
+                     </span>
+                   ) : (
+                     <span className="px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                       Editable
+                     </span>
+                   )}
+                 </div>
+
+                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                   <div>
+                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Estado</label>
+                     <select
+                       value={dayDraft.estado}
+                       onChange={(e) =>
+                         setDayDraft((prev) => ({
+                           ...prev,
+                           estado: e.target.value as Asistencia['estado'],
+                           hora_entrada: e.target.value === 'presente' ? prev.hora_entrada : '',
+                           hora_salida: e.target.value === 'presente' ? prev.hora_salida : ''
+                         }))
+                       }
+                       disabled={!!selectedHistoryRecord?.cerrado}
+                       className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700 outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                     >
+                       <option value="presente">Presente</option>
+                       <option value="falta">Falta</option>
+                       <option value="reposo">Reposo</option>
+                       <option value="vacaciones">Vacaciones</option>
+                     </select>
+                   </div>
+
+                   <div>
+                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Hora Entrada</label>
+                     <input
+                       type="time"
+                       value={dayDraft.hora_entrada}
+                       onChange={(e) => setDayDraft((prev) => ({ ...prev, hora_entrada: e.target.value }))}
+                       disabled={dayDraft.estado !== 'presente' || !!selectedHistoryRecord?.cerrado}
+                       className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white text-sm font-mono font-bold text-slate-700 outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                     />
+                   </div>
+
+                   <div>
+                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Hora Salida</label>
+                     <input
+                       type="time"
+                       value={dayDraft.hora_salida}
+                       onChange={(e) => setDayDraft((prev) => ({ ...prev, hora_salida: e.target.value }))}
+                       disabled={dayDraft.estado !== 'presente' || !!selectedHistoryRecord?.cerrado}
+                       className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white text-sm font-mono font-bold text-slate-700 outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                     />
+                   </div>
+
+                   <div className="md:col-span-1 flex items-end">
+                     <button
+                       type="button"
+                       onClick={saveCalendarDay}
+                       disabled={savingCalendarDay || !!selectedHistoryRecord?.cerrado}
+                       className="w-full py-3 rounded-xl bg-[#1E1E2D] text-white text-[10px] font-black uppercase tracking-[0.2em] hover:bg-black transition-all disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
+                     >
+                       {savingCalendarDay ? 'Guardando...' : 'Guardar Día'}
+                     </button>
+                   </div>
+                 </div>
+
+                 <div>
+                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Observaciones</label>
+                   <textarea
+                     value={dayDraft.observaciones}
+                     onChange={(e) => setDayDraft((prev) => ({ ...prev, observaciones: e.target.value }))}
+                     disabled={!!selectedHistoryRecord?.cerrado}
+                     placeholder="Notas del día (opcional)"
+                     className="w-full min-h-20 px-4 py-3 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-700 outline-none disabled:bg-slate-100 disabled:text-slate-400 resize-y"
+                   />
+                 </div>
+               </div>
+             )}
+           </div>
 
            {/* Resumen Quincenal LOTTT */}
            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">

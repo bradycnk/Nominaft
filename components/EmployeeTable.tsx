@@ -3,12 +3,15 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase.ts';
 import { Empleado } from '../types.ts';
 import EmployeeModal from './EmployeeModal.tsx';
+import EmployeeProfile from './EmployeeProfile.tsx';
 
 const EmployeeTable: React.FC = () => {
   const [employees, setEmployees] = useState<Empleado[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Empleado | null>(null);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     fetchEmployees();
@@ -55,20 +58,60 @@ const EmployeeTable: React.FC = () => {
     setSelectedEmployee(emp);
     setIsModalOpen(true);
   };
+  
+  const handleNameClick = (employeeId: string) => {
+    setSelectedEmployeeId(employeeId);
+  };
+
+  const handleBackToList = () => {
+    setSelectedEmployeeId(null);
+  };
+
+  const handleDeleteClick = async (id: string, nombre: string, apellido: string) => {
+    if (window.confirm(`¿Está seguro de que desea eliminar permanentemente al empleado ${nombre} ${apellido}? Esta acción eliminará todo su historial (nóminas, asistencias, adelantos) de forma irreversible.`)) {
+      try {
+        const { error } = await supabase.from('empleados').delete().eq('id', id);
+        if (error) throw error;
+        setEmployees(prev => prev.filter(emp => emp.id !== id));
+      } catch (error: any) {
+        console.error('Error al eliminar empleado:', error);
+        alert(`Hubo un error al intentar eliminar el empleado: ${error.message || 'Error desconocido'}`);
+      }
+    }
+  };
+
+  const filteredEmployees = employees.filter(emp =>
+    (emp.nombre.toLowerCase() + ' ' + emp.apellido.toLowerCase()).includes(searchTerm.toLowerCase()) ||
+    emp.cedula.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    emp.cargo.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  
+  if (selectedEmployeeId) {
+    return <EmployeeProfile employeeId={selectedEmployeeId} onBack={handleBackToList} />;
+  }
 
   return (
     <div className="bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden">
       <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-white">
         <div>
           <h2 className="text-xl font-black text-slate-800 tracking-tight">Nómina de Empleados</h2>
-          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Total registrados: {employees.length}</p>
+          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Total registrados: {filteredEmployees.length}</p>
         </div>
-        <button 
-          onClick={handleAddClick}
-          className="bg-[#10b981] hover:bg-emerald-600 text-white px-8 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-100 transform active:scale-95 flex items-center gap-2"
-        >
-          <span className="text-base">+</span> Agregar Empleado
-        </button>
+        <div className="flex items-center gap-4">
+          <input 
+            type="text"
+            placeholder="Buscar empleado..."
+            className="w-full bg-slate-50 border border-slate-200 text-slate-900 px-4 py-3 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+          />
+          <button 
+            onClick={handleAddClick}
+            className="bg-[#10b981] hover:bg-emerald-600 text-white px-8 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-100 transform active:scale-95 flex items-center gap-2"
+          >
+            <span className="text-base">+</span> Agregar Empleado
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -85,7 +128,7 @@ const EmployeeTable: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {loading && employees.length === 0 ? (
+            {loading && filteredEmployees.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-8 py-20 text-center">
                   <div className="flex flex-col items-center gap-4">
@@ -94,7 +137,7 @@ const EmployeeTable: React.FC = () => {
                   </div>
                 </td>
               </tr>
-            ) : employees.length === 0 ? (
+            ) : filteredEmployees.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-8 py-20 text-center">
                   <div className="text-slate-200 text-5xl mb-4">📂</div>
@@ -102,7 +145,7 @@ const EmployeeTable: React.FC = () => {
                 </td>
               </tr>
             ) : (
-              employees.map((emp) => (
+              filteredEmployees.map((emp) => (
                 <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors group">
                   <td className="px-8 py-6">
                     <div className="w-14 h-14 rounded-full bg-slate-100 border-2 border-white shadow-md flex items-center justify-center overflow-hidden transition-transform group-hover:scale-110">
@@ -122,7 +165,7 @@ const EmployeeTable: React.FC = () => {
                       )}
                     </div>
                   </td>
-                  <td className="px-8 py-6">
+                  <td className="px-8 py-6 cursor-pointer" onClick={() => handleNameClick(emp.id)}>
                     <div>
                       <div className="font-black text-slate-800 text-sm uppercase leading-tight">{emp.nombre} {emp.apellido}</div>
                       <div className="text-[10px] font-black text-emerald-500 uppercase tracking-tighter mt-1 flex items-center gap-1">
@@ -174,6 +217,13 @@ const EmployeeTable: React.FC = () => {
                           <span className="text-lg">📄</span>
                         </a>
                       )}
+                      <button 
+                        onClick={() => handleDeleteClick(emp.id, emp.nombre, emp.apellido)}
+                        className="p-2.5 hover:bg-rose-50 text-slate-300 hover:text-rose-500 rounded-xl transition-all"
+                        title="Eliminar Permanentemente"
+                      >
+                        <span className="text-lg">🗑️</span>
+                      </button>
                     </div>
                   </td>
                 </tr>

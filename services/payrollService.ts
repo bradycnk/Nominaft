@@ -145,7 +145,8 @@ export const calculatePayroll = (
   empleado: Empleado,
   config: ConfigGlobal,
   diasTrabajados: number = 15, // Por defecto quincenal
-  periodo: 'Q1' | 'Q2' = 'Q1'
+  periodo: 'Q1' | 'Q2' = 'Q1',
+  earnings?: number
 ) => {
   const tasa = config.tasa_bcv;
   const sueldoMensualVef = (empleado.salario_usd * tasa);
@@ -162,17 +163,24 @@ export const calculatePayroll = (
 
   const salarioMinimo = config.salario_minimo_vef;
   const topeIvss = salarioMinimo * TOPE_IVSS_SALARIOS_MINIMOS;
-  const baseImponiblePeriodo = Math.min(sueldoPeriodoVef, (topeIvss / 30) * diasTrabajados);
+  const baseCalculo = earnings !== undefined ? earnings : sueldoPeriodoVef;
+  
+  let deduccionIvss = 0;
+  let deduccionSpf = 0;
+  let deduccionFaov = 0;
 
-  const deduccionIvss = baseImponiblePeriodo * 0.04; 
-  const deduccionSpf = baseImponiblePeriodo * 0.005; 
-  const deduccionFaov = sueldoPeriodoVef * 0.01; 
+  if (baseCalculo > 0) {
+    const baseImponiblePeriodo = Math.min(baseCalculo, (topeIvss / 30) * diasTrabajados);
+    deduccionIvss = baseImponiblePeriodo * 0.04;
+    deduccionSpf = baseImponiblePeriodo * 0.005;
+    deduccionFaov = baseCalculo * 0.01;
+  }
 
   const cestaticketMensualVef = config.cestaticket_usd * tasa;
   const bonoAlimentacionVef = periodo === 'Q2' ? cestaticketMensualVef : 0;
 
   const totalDeducciones = deduccionIvss + deduccionSpf + deduccionFaov;
-  const netoPagarVef = sueldoPeriodoVef + bonoAlimentacionVef - totalDeducciones;
+  const netoPagarVef = baseCalculo + bonoAlimentacionVef - totalDeducciones;
 
   return {
     anios_servicio: aniosServicio,

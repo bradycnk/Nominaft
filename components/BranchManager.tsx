@@ -8,6 +8,8 @@ const BranchManager: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [editingBranch, setEditingBranch] = useState<Sucursal | null>(null);
   
   // Form Data
   const [formData, setFormData] = useState({
@@ -43,17 +45,24 @@ const BranchManager: React.FC = () => {
     }
   };
 
-  const handleOpenModal = () => {
-    setFormData({
-      nombre_id: '',
-      rif: '',
-      direccion: '',
-      administrador: '',
-      correo_admin: '',
-      es_principal: false,
-      logo_url: ''
-    });
-    setLogoPreview(null);
+  const handleOpenModal = (branch: Sucursal | null) => {
+    if (branch) {
+      setFormData(branch);
+      setLogoPreview(branch.logo_url);
+      setEditingBranch(branch);
+    } else {
+      setFormData({
+        nombre_id: '',
+        rif: '',
+        direccion: '',
+        administrador: '',
+        correo_admin: '',
+        es_principal: false,
+        logo_url: ''
+      });
+      setLogoPreview(null);
+      setEditingBranch(null);
+    }
     setShowModal(true);
   };
 
@@ -98,8 +107,13 @@ const BranchManager: React.FC = () => {
         logo_url: finalLogoUrl
       };
 
-      const { error } = await supabase.from('sucursales').insert([payload]);
-      if (error) throw error;
+      if (editingBranch) {
+        const { error } = await supabase.from('sucursales').update(payload).eq('id', editingBranch.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('sucursales').insert([payload]);
+        if (error) throw error;
+      }
 
       setShowModal(false);
       fetchBranches();
@@ -110,6 +124,24 @@ const BranchManager: React.FC = () => {
     }
   };
 
+  const handleDelete = async (branchId: number) => {
+    if (window.confirm('¿Está seguro de que desea eliminar esta sucursal?')) {
+      try {
+        const { error } = await supabase.from('sucursales').delete().eq('id', branchId);
+        if (error) throw error;
+        fetchBranches();
+      } catch (err: any) {
+        alert('Error: ' + err.message);
+      }
+    }
+  };
+
+  const filteredBranches = branches.filter(branch =>
+    branch.nombre_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    branch.rif.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    branch.administrador.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
       <div className="p-6 border-b border-slate-200 bg-white flex justify-between items-center">
@@ -117,12 +149,21 @@ const BranchManager: React.FC = () => {
           <h2 className="text-xl font-bold text-slate-800">Gestión de Sucursales</h2>
           <p className="text-sm text-slate-500 font-medium">Administre las sedes físicas de la farmacia</p>
         </div>
-        <button 
-          onClick={handleOpenModal}
-          className="bg-[#10b981] hover:bg-emerald-600 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-50 active:scale-95"
-        >
-          + Agregar Sucursal
-        </button>
+        <div className="flex items-center gap-4">
+          <input 
+            type="text"
+            placeholder="Buscar sucursal..."
+            className="w-full bg-slate-50 border border-slate-200 text-slate-900 px-4 py-3 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+          />
+          <button 
+            onClick={() => handleOpenModal(null)}
+            className="bg-[#10b981] hover:bg-emerald-600 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-50 active:scale-95"
+          >
+            + Agregar Sucursal
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -134,27 +175,28 @@ const BranchManager: React.FC = () => {
               <th className="px-8 py-4">Ubicación Física</th>
               <th className="px-8 py-4">Administrador Responsable</th>
               <th className="px-8 py-4 text-center">Tipo</th>
+              <th className="px-8 py-4 text-center">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
             {loading ? (
               <tr>
-                <td colSpan={5} className="p-20 text-center text-slate-400">
+                <td colSpan={6} className="p-20 text-center text-slate-400">
                   <div className="flex flex-col items-center gap-3">
                     <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent animate-spin rounded-full"></div>
                     <span className="text-[10px] font-black uppercase tracking-widest">Sincronizando sedes...</span>
                   </div>
                 </td>
               </tr>
-            ) : branches.length === 0 ? (
+            ) : filteredBranches.length === 0 ? (
               <tr>
-                <td colSpan={5} className="p-20 text-center">
+                <td colSpan={6} className="p-20 text-center">
                   <div className="text-4xl mb-4 opacity-20">🏢</div>
                   <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">No hay sucursales registradas en el sistema</p>
                 </td>
               </tr>
             ) : (
-              branches.map(branch => (
+              filteredBranches.map(branch => (
                 <tr key={branch.id} className="hover:bg-slate-50/50 transition-colors group">
                   <td className="px-8 py-5">
                     <div className="flex items-center gap-4">
@@ -188,6 +230,16 @@ const BranchManager: React.FC = () => {
                       {branch.es_principal ? 'PRINCIPAL' : 'SUCURSAL'}
                     </span>
                   </td>
+                  <td className="px-8 py-5 text-center">
+                    <div className="flex justify-center gap-1">
+                      <button onClick={() => handleOpenModal(branch)} className="p-2.5 hover:bg-slate-100 text-slate-300 hover:text-amber-500 rounded-xl transition-all" title="Editar Sucursal">
+                        <span className="text-lg">✏️</span>
+                      </button>
+                      <button onClick={() => handleDelete(branch.id)} className="p-2.5 hover:bg-slate-100 text-slate-300 hover:text-rose-500 rounded-xl transition-all" title="Eliminar Sucursal">
+                        <span className="text-lg">🗑️</span>
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))
             )}
@@ -205,7 +257,7 @@ const BranchManager: React.FC = () => {
              <button onClick={() => setShowModal(false)} className="absolute top-6 right-8 text-slate-400 hover:text-slate-600">✕</button>
              
              <div className="mb-8">
-               <h3 className="text-2xl font-black text-slate-800 tracking-tight">Registrar Nueva Sede</h3>
+               <h3 className="text-2xl font-black text-slate-800 tracking-tight">{editingBranch ? 'Editar Sede' : 'Registrar Nueva Sede'}</h3>
                <p className="text-slate-400 text-xs font-black uppercase tracking-widest mt-1">Configuración Fiscal de la Entidad</p>
              </div>
 
@@ -325,7 +377,7 @@ const BranchManager: React.FC = () => {
                       disabled={uploading}
                       className="flex-[2] bg-[#1E1E2D] text-white py-4 rounded-xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl hover:bg-black transition-all disabled:opacity-70 flex items-center justify-center gap-2"
                     >
-                      {uploading ? 'Guardando...' : 'Confirmar Registro'}
+                      {uploading ? 'Guardando...' : (editingBranch ? 'Actualizar Sede' : 'Confirmar Registro')}
                     </button>
                   </div>
                </div>
